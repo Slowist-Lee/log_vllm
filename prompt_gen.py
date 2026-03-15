@@ -5,39 +5,46 @@ import pandas as pd
 from transformers import AutoTokenizer
 
 def generate_exact_length_prompts(
-    model_name="meta-llama/Meta-Llama-3-8B",
-    # 你的 Tokenizer 本地路径
-    tokenizer_path='./llama3_token/',
+    # 1. 修改为你 Mistral 模型的本地实际路径
+    model_path="./mistral_7b_model/LLM-Research/Mistral-7B-v0.3", 
     parquet_file="./data/train-00000-of-00002.parquet",
-    output_file="./prompt/llama3_test_prompts.csv",
+    output_file="./prompt/mistral_test_prompts.csv",
     num_short=25, short_len=100,
     num_long=25, long_len=10000
 ):
-    print(f"Loading tokenizer from: {tokenizer_path}")
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+    print(f"Loading tokenizer from: {model_path}")
+    # Mistral 通常不需要 trust_remote_code，但加上也无妨
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     
+    # 确保有起始符 <s> 的设置
+    if tokenizer.bos_token is None:
+        tokenizer.bos_token = "<s>"
+
     print(f"Reading dataset: {parquet_file}")
     df = pd.read_parquet(parquet_file)
-    # 过滤掉非字符串和空行，确保数据干净
-    valid_texts = [t for t in df['text'] if isinstance(t, str) and t.strip()]
+    valid_texts = [t for t in df['text'] if isinstance(t, str) and len(t) > 10]
     
     prompts = []
-    
-    print("Generating Short Prompts...")
+
+    # --- 生成 Short Prompts ---
+    print(f"Generating Short Prompts (Len: {short_len})...")
     short_collected = 0
-    short_prefix_text = "Analyze the following:\n\n"
-    short_prefix_tokens = tokenizer.encode(short_prefix_text, add_special_tokens=False)
+    short_prefix_text = "Analyze the following text:\n"
+    
     for text in valid_texts:
         if short_collected >= num_short:
             break
             
+        # 编码前缀和文本
+        # 我们手动处理 BOS，所以 add_special_tokens 设为 False
+        prefix_tokens = tokenizer.encode(tokenizer.bos_token + short_prefix_text, add_special_tokens=False)
         text_tokens = tokenizer.encode(text, add_special_tokens=False)
         
-        tokens = short_prefix_tokens + text_tokens
+        combined = prefix_tokens + text_tokens
 
-        if len(tokens) >= short_len:
-            exact_tokens = tokens[:short_len]
-            exact_text = tokenizer.decode(exact_tokens)
+        if len(combined) >= short_len:
+            exact_tokens = combined[:short_len]
+            exact_text = tokenizer.decode(exact_tokens, skip_special_tokens=False)
             
             prompts.append({
                 "id": f"short_{short_collected:02d}",
@@ -46,38 +53,28 @@ def generate_exact_length_prompts(
                 "prompt": exact_text
             })
             short_collected += 1
-            print(f"  [Short] Collected {short_collected}/{num_short}")
+            if short_collected % 5 == 0:
+                print(f"  [Short] {short_collected}/{num_short}")
 
-    print("\nGenerating Long Prompts (Summarize + Concatenation)...")
+    # --- 生成 Long Prompts ---
+    print(f"\nGenerating Long Prompts (Len: {long_len})...")
     long_collected = 0
+    long_prefix_text = "Summarize the following document in detail:\n\n"
     
-    # 定义前缀
-    prefix_text = "Summarize the following text:\n\n"
-    prefix_tokens = tokenizer.encode(prefix_text, add_special_tokens=False)
+    # 初始化缓冲区，放入 BOS 和前缀
+    current_tokens = tokenizer.encode(tokenizer.bos_token + long_prefix_text, add_special_tokens=False)
     
-    # 初始化当前缓冲区（放入前缀）
-    current_tokens = list(prefix_tokens)
-    
-    for text in valid_texts[::-1]: # 倒序遍历，增加一点数据的多样性
+    for text in valid_texts[::-1]: # 倒序增加多样性
         if long_collected >= num_long:
             break
         
-        # 获取当前行的 token
-        # 注意：在拼接时最好加一个换行符，防止单词粘连
-        line_tokens = tokenizer.encode(text + "\n", add_special_tokens=False)
-        
-        # 拼接到当前缓冲区
+        line_tokens = tokenizer.encode(text + "\n\n", add_special_tokens=False)
         current_tokens.extend(line_tokens)
         
-        # 检查长度是否达标
         if len(current_tokens) >= long_len:
-            # 1. 截取到精确长度
             exact_tokens = current_tokens[:long_len]
+            exact_text = tokenizer.decode(exact_tokens, skip_special_tokens=False)
             
-            # 2. 解码回文本
-            exact_text = tokenizer.decode(exact_tokens)
-            
-            # 3. 保存
             prompts.append({
                 "id": f"long_{long_collected:02d}",
                 "category": "long",
@@ -85,22 +82,27 @@ def generate_exact_length_prompts(
                 "prompt": exact_text
             })
             long_collected += 1
-            print(f"  [Long] Collected {long_collected}/{num_long}")
+            print(f"  [Long] {long_collected}/{num_long}")
 
-            current_tokens = list(prefix_tokens)
+            # 重置缓冲区并添加前缀供下一条使用
+            current_tokens = tokenizer.encode(tokenizer.bos_token + long_prefix_text, add_special_tokens=False)
 
+    # --- 保存结果 ---
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    
     print(f"\nWriting to {output_file}...")
     with open(output_file, 'w', encoding='utf-8', newline='') as f:
-        fieldnames = ["id", "category", "exact_tokens", "prompt"]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        
+        writer = csv.DictWriter(f, fieldnames=["id", "category", "exact_tokens", "prompt"])
         writer.writeheader()
-        for p in prompts:
-            writer.writerow(p)
+        writer.writerows(prompts)
             
-    print(f"Done! Saved {len(prompts)} prompts to {output_file}")
+    print(f"Success! Generated {len(prompts)} prompts.")
 
 if __name__ == "__main__":
-    generate_exact_length_prompts()
+    # 在这里填入你本地 Mistral 文件夹的路径
+    MY_MISTRAL_PATH = "./mistral_7b_model/LLM-Research/Mistral-7B-v0.3" 
+    
+    generate_exact_length_prompts(
+        model_path=MY_MISTRAL_PATH,
+        short_len=128,    # 可以根据需要调整
+        long_len=8192     # Mistral v0.1 原生支持 8k，v0.3 支持更多，10k 也可以
+    )

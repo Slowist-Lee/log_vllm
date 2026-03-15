@@ -1,6 +1,5 @@
 # 测试PD分离
 
-import csv
 import os
 import time
 import threading
@@ -10,6 +9,12 @@ import shutil
 
 import vllm
 from vllm import LLM, SamplingParams
+
+
+WARMUP_PROMPT = "Hello, this is a warm up prompt."
+PAPER_STYLE_PROMPT_REPEAT = 3
+PREFILL_PROMPT_MULTIPLIER = 128
+DECODE_PROMPT_TEXT = "Write a concise explanation of why GPU power can drop during autoregressive decoding."
 
 class GPUMonitor:
     def __init__(self, interval=0.075):
@@ -50,7 +55,9 @@ class GPUMonitor:
                 gpu_clock = pynvml.nvmlDeviceGetClockInfo(self.handle, 0)
                 mem_clock = pynvml.nvmlDeviceGetClockInfo(self.handle, 2)
                 # 获取利用率
-                util = pynvml.nvmlDeviceGetUtilizationRates(self.handle).gpu
+                util_rates = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
+                util_gpu = util_rates.gpu
+                util_mem = util_rates.memory
                 
                 self.data.append({
                     "timestamp": current_time,
@@ -58,7 +65,9 @@ class GPUMonitor:
                     "power_w": power,
                     "gpu_clock_mhz": gpu_clock,
                     "mem_clock_mhz": mem_clock,
-                    "util_pct": util
+                    "util_gpu_pct": util_gpu,
+                    "util_mem_pct": util_mem,
+                    "util_pct": util_gpu
                 })
             except pynvml.NVMLError:
                 pass
@@ -136,6 +145,14 @@ def print_system_info(model_name):
     print(f"Model: {model_name} | vLLM: {vllm.__version__}")
     print("========================\n")
 
+
+def run_warmup(llm: LLM) -> None:
+    print("Running Warm-up...")
+    dummy_params = SamplingParams(temperature=0.0, max_tokens=16)
+    llm.generate([WARMUP_PROMPT] * 2, dummy_params)
+    print("Warm-up complete. Waiting for GPU to settle.\n")
+    time.sleep(3)
+
 if __name__ == "__main__":
     if not check_disk_space():
         exit(1)
@@ -144,33 +161,22 @@ if __name__ == "__main__":
     print_system_info(model_path)
 
     print(f"Initializing vLLM with {model_path}...")
-    # 建议这里指定 enforce_eager=True，可以避免 CUDA Graph 捕获时的初始功率毛刺干扰
-    llm = LLM(model=model_path, enforce_eager=True) 
-    print("Loading prompts from CSV...")
-    df_prompts = pd.read_csv("./prompt/llama3_test_prompts.csv")
-    
-    # 根据 category 列筛选，并转换为列表
-    long_prompts_list = df_prompts[df_prompts['category'] == 'long']['prompt'].tolist()
-    short_prompts_list = df_prompts[df_prompts['category'] == 'short']['prompt'].tolist()
-    long_prompts_list = long_prompts_list[:5]
-    short_prompts_list = short_prompts_list[:5]
+    # 关闭 chunked prefill，避免超长 prompt 被切碎后形成长时间锯齿功耗。
+    llm = LLM(model=model_path, enforce_eager=True, enable_chunked_prefill=False) 
+    print("Using built-in prompts...")
+    long_base = "The quick brown fox jumps over the lazy dog "
+    paper_style_long_prompt = (long_base * PREFILL_PROMPT_MULTIPLIER).strip()
 
-    # 增加 Fallback 机制：如果 CSV 中找不到对应类别，则塞入一条假数据，保证列表不为空
-    if not long_prompts_list:
-        long_prompts_list = ["Fallback long prompt... " * 100]
-    if not short_prompts_list:
-        short_prompts_list = ["Fallback short prompt."]
+    # 参考论文设定：同一类请求重复多次，而不是每次都换一条长度差异很大的 prompt。
+    long_prompts_list = [paper_style_long_prompt] * PAPER_STYLE_PROMPT_REPEAT
+    short_prompts_list = [DECODE_PROMPT_TEXT] * PAPER_STYLE_PROMPT_REPEAT
     
     print(f"Loaded {len(long_prompts_list)} long prompts and {len(short_prompts_list)} short prompts.")
     
     # ==========================================
     # 0. 极其关键的预热阶段 (Warm-up)
     # ==========================================
-    print("Running Warm-up...")
-    dummy_params = SamplingParams(temperature=0.0, max_tokens=10)
-    llm.generate(["Hello, this is a warm up prompt."] * 4, dummy_params)
-    print("Warm-up complete. Starting actual measurements.\n")
-    time.sleep(2) # 让 GPU 冷却并恢复到待机功耗
+    run_warmup(llm)
 
     # ==========================================
     # 1. 测量 Prefill 阶段 (长输入, 极短输出)
@@ -194,7 +200,7 @@ if __name__ == "__main__":
         prefill_monitor.save_and_calculate(filename, prefill_tokens, 
                                           input_text=long_prompt, output_text=prefill_output_text)
         
-        time.sleep(2) # 每次跑完让 GPU 冷却
+        time.sleep(3) # 每次跑完让 GPU 更充分回到稳定空闲态
 
     # ==========================================
     # 2. 测量 Decode 阶段 (短输入, 极长输出)
@@ -218,6 +224,6 @@ if __name__ == "__main__":
         decode_monitor.save_and_calculate(filename, decode_tokens,
                                          input_text=short_prompt, output_text=decode_output_text)
         
-        time.sleep(2)
+        time.sleep(3)
 
     print("\nAll Tasks completed successfully!")

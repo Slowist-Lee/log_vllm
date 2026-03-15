@@ -6,8 +6,8 @@ set -e
 mkdir -p ./log
 
 # 初始化 CSV 文件并写入表头
-echo "phase,frequency_mhz,duration_s,avg_power_w,total_energy_j,throughput_tps,j_per_token" > ./log/task4a_results.csv
-echo "batch_size,duration_s,avg_power_w,total_energy_j,throughput_tps,j_per_token" > ./log/task4b_results.csv
+echo "phase,frequency_mhz,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens" > ./log/task4a_results.csv
+echo "batch_size,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens" > ./log/task4b_results.csv
 
 echo "=========================================================="
 echo " Starting Task 4a: GPU Frequency Scaling Experiments"
