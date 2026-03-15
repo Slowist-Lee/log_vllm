@@ -11,7 +11,7 @@ def generate_exact_length_prompts(
     parquet_file="./data/train-00000-of-00002.parquet",
     output_file="./prompt/llama3_test_prompts.csv",
     num_short=25, short_len=100,
-    num_long=25, long_len=1000
+    num_long=25, long_len=10000
 ):
     print(f"Loading tokenizer from: {tokenizer_path}")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
