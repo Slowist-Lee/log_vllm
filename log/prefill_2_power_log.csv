@@ -1,0 +1,2 @@
+timestamp,time_offset,power_w,gpu_clock_mhz,mem_clock_mhz,util_gpu_pct,util_mem_pct,util_pct,time_interval,energy_j
+1773579902.5047967,0.00020694732666015625,53.279,1530,877,0,0,0,0.075,3.995925
