@@ -1,3 +1,5 @@
+# 测试PD分离
+
 import csv
 import os
 import time
@@ -150,6 +152,8 @@ if __name__ == "__main__":
     # 根据 category 列筛选，并转换为列表
     long_prompts_list = df_prompts[df_prompts['category'] == 'long']['prompt'].tolist()
     short_prompts_list = df_prompts[df_prompts['category'] == 'short']['prompt'].tolist()
+    long_prompts_list = long_prompts_list[:5]
+    short_prompts_list = short_prompts_list[:5]
 
     # 增加 Fallback 机制：如果 CSV 中找不到对应类别，则塞入一条假数据，保证列表不为空
     if not long_prompts_list:

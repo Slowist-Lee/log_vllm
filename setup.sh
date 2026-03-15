@@ -79,6 +79,7 @@ pip install -U huggingface_hub
 echo "开始下载 Mistral 模型 (约 14GB)"
 # 这里假设下载 Instruct-v0.2 版本，因为它是目前主流测试的
 huggingface-cli download --resume-download mistralai/Mistral-7B-Instruct-v0.2 --local-dir mistral_7b_model
-
+# 运行脚本
+python prompt_gen.py || echo "Python 脚本运行遇到问题，请检查代码或配置"
 # 运行脚本
 python log_v4.py || echo "Python 脚本运行遇到问题，请检查代码或配置"
