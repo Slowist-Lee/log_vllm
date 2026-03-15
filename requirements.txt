@@ -3,3 +3,5 @@ datasets>=2.18.0
 pynvml>=11.5.0
 pandas
 threading
+matplotlib
+seaborn
