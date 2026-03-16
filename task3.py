@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 # ==========================================
 # 请确保这里的文件路径与你实际保存的一致
 try:
-    df_prefill = pd.read_csv("./log/prefill_0_power_log.csv")
-    df_decode = pd.read_csv("./log/decode_0_power_log.csv")
+    df_prefill = pd.read_csv("./log/prefill_3_power_log.csv")
+    df_decode = pd.read_csv("./log/decode_3_power_log.csv")
 except FileNotFoundError:
     print("找不到 CSV 文件，请检查路径是否正确。")
     exit()
@@ -37,8 +37,8 @@ def normalize_util_columns(df: pd.DataFrame, name: str) -> pd.DataFrame:
     return df
 
 
-df_prefill = normalize_util_columns(df_prefill, "./log/prefill_0_power_log.csv")
-df_decode = normalize_util_columns(df_decode, "./log/decode_0_power_log.csv")
+df_prefill = normalize_util_columns(df_prefill, "./log/prefill_3_power_log.csv")
+df_decode = normalize_util_columns(df_decode, "./log/decode_3_power_log.csv")
 
 required_columns = [
     "time_offset",
@@ -47,8 +47,8 @@ required_columns = [
     "util_gpu_pct",
 ]
 
-validate_columns(df_prefill, "./log/prefill_0_power_log.csv", required_columns)
-validate_columns(df_decode, "./log/decode_0_power_log.csv", required_columns)
+validate_columns(df_prefill, "./log/prefill_3_power_log.csv", required_columns)
+validate_columns(df_decode, "./log/decode_3_power_log.csv", required_columns)
 
 # 仅保留绘图需要的数值列，避免字符串或异常值导致绘图失败
 for col in required_columns:

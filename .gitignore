@@ -1,3 +1,4 @@
-data/
 llama3_8b_model/
 llama3_token/
+longbench-v2.csv
+SKILL.md
