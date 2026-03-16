@@ -143,17 +143,27 @@ def check_disk_space(min_gb=2):
     return True
 
 def print_system_info(model_name):
+    os.makedirs("./log", exist_ok=True)
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
     gpu_name = pynvml.nvmlDeviceGetName(handle)
     if isinstance(gpu_name, bytes): gpu_name = gpu_name.decode('utf-8')
     driver = pynvml.nvmlSystemGetDriverVersion()
     if isinstance(driver, bytes): driver = driver.decode('utf-8')
+
+    info_lines = [
+        "=== Environment Info ===",
+        f"GPU: {gpu_name} | Driver: {driver}",
+        f"Model: {model_name} | vLLM: {vllm.__version__}",
+        "========================",
+    ]
     
-    print("\n=== Environment Info ===")
-    print(f"GPU: {gpu_name} | Driver: {driver}")
-    print(f"Model: {model_name} | vLLM: {vllm.__version__}")
-    print("========================\n")
+    print("\n" + "\n".join(info_lines) + "\n")
+
+    env_path = "./log/system_info_log_pd.txt"
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(info_lines) + "\n")
+    print(f"Environment info saved to: {env_path}")
 
 
 def run_warmup(llm: LLM) -> None:

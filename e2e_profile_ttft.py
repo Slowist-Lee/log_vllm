@@ -6,6 +6,7 @@ import uuid
 
 import pandas as pd
 import pynvml
+import vllm
 from vllm import SamplingParams
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
@@ -93,6 +94,33 @@ def build_engine(model_path: str, max_num_seqs: int, max_num_batched_tokens: int
         max_num_batched_tokens=max_num_batched_tokens,
     )
     return LLMEngine.from_engine_args(engine_args)
+
+
+def save_system_info(model_name: str, script_name: str = "e2e_profile_ttft") -> None:
+    os.makedirs("./log", exist_ok=True)
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+
+    gpu_name = pynvml.nvmlDeviceGetName(handle)
+    if isinstance(gpu_name, bytes):
+        gpu_name = gpu_name.decode("utf-8")
+
+    driver = pynvml.nvmlSystemGetDriverVersion()
+    if isinstance(driver, bytes):
+        driver = driver.decode("utf-8")
+
+    info_lines = [
+        "=== Environment Info ===",
+        f"GPU: {gpu_name} | Driver: {driver}",
+        f"Model: {model_name} | vLLM: {vllm.__version__}",
+        "========================",
+    ]
+    print("\n" + "\n".join(info_lines) + "\n")
+
+    out_path = f"./log/system_info_{script_name}.txt"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(info_lines) + "\n")
+    print(f"Environment info saved to: {out_path}")
 
 
 def run_one_request_with_ttft(
@@ -235,6 +263,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     prompt = load_long_prompt(args.prompt_file)
+    save_system_info(args.model, script_name="e2e_profile_ttft")
 
     engine = build_engine(
         model_path=args.model,

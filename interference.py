@@ -4,9 +4,36 @@ import time
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import pynvml
+import vllm
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
 from vllm import SamplingParams
+
+
+def save_system_info(model_name, script_name="interference"):
+    os.makedirs("./log", exist_ok=True)
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    gpu_name = pynvml.nvmlDeviceGetName(handle)
+    if isinstance(gpu_name, bytes):
+        gpu_name = gpu_name.decode("utf-8")
+    driver = pynvml.nvmlSystemGetDriverVersion()
+    if isinstance(driver, bytes):
+        driver = driver.decode("utf-8")
+
+    info_lines = [
+        "=== Environment Info ===",
+        f"GPU: {gpu_name} | Driver: {driver}",
+        f"Model: {model_name} | vLLM: {vllm.__version__}",
+        "========================",
+    ]
+    print("\n" + "\n".join(info_lines) + "\n")
+
+    out_path = f"./log/system_info_{script_name}.txt"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(info_lines) + "\n")
+    print(f"Environment info saved to: {out_path}")
 
 def setup_engine(model_path):
     print(f"Initializing LLMEngine with model: {model_path}...")
@@ -104,6 +131,7 @@ def plot_results(df, prefill_length):
 if __name__ == "__main__":
     # 使用你之前配置的模型路径
     MODEL_PATH = "./mistral_7b_model/LLM-Research/Mistral-7B-v0.3"
+    save_system_info(MODEL_PATH, script_name="interference")
     
     # 初始化引擎 (这个过程比较慢，只做一次)
     engine = setup_engine(MODEL_PATH)

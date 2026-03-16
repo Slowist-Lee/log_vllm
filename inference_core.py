@@ -4,6 +4,7 @@ import argparse
 import threading
 import pynvml
 import pandas as pd
+import vllm
 from vllm import LLM, SamplingParams
 
 
@@ -43,6 +44,31 @@ def extract_ttft_tpot(output_item, duration_s, output_tokens):
         tpot_s = 0.0
 
     return round(ttft_s, 4), round(tpot_s, 6)
+
+
+def save_system_info(model_name, script_name="inference_core"):
+    os.makedirs("./log", exist_ok=True)
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    gpu_name = pynvml.nvmlDeviceGetName(handle)
+    if isinstance(gpu_name, bytes):
+        gpu_name = gpu_name.decode("utf-8")
+    driver = pynvml.nvmlSystemGetDriverVersion()
+    if isinstance(driver, bytes):
+        driver = driver.decode("utf-8")
+
+    info_lines = [
+        "=== Environment Info ===",
+        f"GPU: {gpu_name} | Driver: {driver}",
+        f"Model: {model_name} | vLLM: {vllm.__version__}",
+        "========================",
+    ]
+    print("\n" + "\n".join(info_lines) + "\n")
+
+    out_path = f"./log/system_info_{script_name}.txt"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(info_lines) + "\n")
+    print(f"Environment info saved to: {out_path}")
 
 class GPUMonitor:
     def __init__(self, interval=0.075):
@@ -126,6 +152,7 @@ def main():
 
     # 2. 初始化 vLLM
     model_path = "./mistral_7b_model/LLM-Research/Mistral-7B-v0.3"
+    save_system_info(model_path, script_name="inference_core")
     llm = LLM(model=model_path, enforce_eager=True)
     
     # 预热 GPU

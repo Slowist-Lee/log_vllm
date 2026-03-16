@@ -8,11 +8,13 @@
 
 - 脚本: `python log_pd.py`
 - 主要产物: `log/prefill_*_power_log.csv`, `log/decode_*_power_log.csv`, `log/prefill_*_io_log.csv`, `log/decode_*_io_log.csv`
+- 环境信息: `log/system_info_log_pd.txt`
 
 1. Task 4（频率与 Batch）
 
 - 脚本: `bash task4_run.sh`
 - 主要产物: `log/task4a_results.csv`, `log/task4b_results.csv`
+- 环境信息: `log/system_info_inference_core.txt`
 
 1. Task 3 绘图
 
@@ -30,11 +32,18 @@
 - 主要产物: `log/e2e_ttft_profile.csv`
 - 可视化: `python e2e_plot_ttft.py`
 - 图像: `log/e2e_ttft_profile.png`
+- 环境信息: `log/system_info_e2e_profile_ttft.txt`
 
 1. 空闲功耗采样（新增）
 
 - 脚本: `python idle_sample.py --duration 180 --interval 0.05`
 - 主要产物: `log/idle_power_log.csv`
+
+1. 干扰实验（可选）
+
+- 脚本: `python interference.py`
+- 主要产物: `log/interference_data_len128.csv`, `log/interference_data_len1024.csv`, `log/interference_len128.png`, `log/interference_len1024.png`
+- 环境信息: `log/system_info_interference.txt`
 
 ## 二、Benchmark 结论映射
 
