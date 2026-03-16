@@ -42,8 +42,13 @@
 1. 干扰实验（可选）
 
 - 脚本: `python interference.py`
-- 主要产物: `log/interference_data_len128.csv`, `log/interference_data_len1024.csv`, `log/interference_len128.png`, `log/interference_len1024.png`
+- 主要产物（GPU 端）: `log/interference_data_len128.csv`, `log/interference_data_len1024.csv`
 - 环境信息: `log/system_info_interference.txt`
+
+1. 干扰实验绘图（本地）
+
+- 脚本: `python interference_plot.py --log-dir ./log`
+- 主要产物（本地）: `log/interference_len128.png`, `log/interference_len1024.png`
 
 ## 二、Benchmark 结论映射
 
@@ -117,6 +122,12 @@ python idle_sample.py --duration 180 --interval 0.05
 
 ```bash
 python interference.py
+```
+
+1. 本地绘制干扰实验图：
+
+```bash
+python interference_plot.py --log-dir ./log
 ```
 
 ## 五、一句话总结

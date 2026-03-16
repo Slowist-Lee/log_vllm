@@ -3,7 +3,6 @@
 import time
 import os
 import pandas as pd
-import matplotlib.pyplot as plt
 import pynvml
 import vllm
 from vllm.engine.arg_utils import EngineArgs
@@ -105,29 +104,6 @@ def run_interference_test(engine, batch_sizes, prefill_length=1024):
 
     return pd.DataFrame(results)
 
-def plot_results(df, prefill_length):
-    plt.figure(figsize=(8, 6))
-    
-    plt.plot(df['batch_size'], df['decoding_with_prefill_ms'], 
-             marker='o', label='decoding-with-one-prefill', color='#1f77b4')
-    plt.plot(df['batch_size'], df['decoding_only_ms'], 
-             marker='o', label='decoding-only', color='#ff7f0e')
-    
-    # 添加水平参考线 (模拟只跑单个 Prefill 的时间，这里取 bs=1 时的差值作为基准参考)
-    baseline_prefill_time = df.loc[df['batch_size'] == df['batch_size'].min(), 'prefill_slowdown_ms'].values[0]
-    plt.axhline(y=baseline_prefill_time, color='#1f77b4', linestyle='--', alpha=0.6)
-    
-    plt.xlabel('Batch Size')
-    plt.ylabel('Latency (ms)')
-    plt.title(f'Batch Execution Time (Input Length $\\approx$ {prefill_length})')
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.5)
-    
-    os.makedirs("./log", exist_ok=True)
-    save_path = f"./log/interference_len{prefill_length}.png"
-    plt.savefig(save_path, dpi=300)
-    print(f"\nPlot saved to {save_path}")
-
 if __name__ == "__main__":
     # 使用你之前配置的模型路径
     MODEL_PATH = "./mistral_7b_model/LLM-Research/Mistral-7B-v0.3"
@@ -145,13 +121,13 @@ if __name__ == "__main__":
     print("Starting Experiment 1: Short Prefill (128 tokens)")
     df_128 = run_interference_test(engine, test_batch_sizes, prefill_length=128)
     df_128.to_csv("./log/interference_data_len128.csv", index=False)
-    plot_results(df_128, prefill_length=128)
+    print("Saved: ./log/interference_data_len128.csv")
     
     # --- 测试 2: 极长的 Prefill 干扰 (复现图 2b) ---
     print("\n" + "="*40)
     print("Starting Experiment 2: Long Prefill (1024 tokens)")
     df_1024 = run_interference_test(engine, test_batch_sizes, prefill_length=1024)
     df_1024.to_csv("./log/interference_data_len1024.csv", index=False)
-    plot_results(df_1024, prefill_length=1024)
+    print("Saved: ./log/interference_data_len1024.csv")
     
-    print("\nAll experiments completed successfully!")
+    print("\nAll experiments completed successfully! (GPU side: CSV only)")
