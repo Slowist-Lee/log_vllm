@@ -5,9 +5,11 @@ set -e
 # 确保 log 文件夹存在
 mkdir -p ./log
 
-# 初始化 CSV 文件并写入表头
-echo "phase,frequency_mhz,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens" > ./log/task4a_results.csv
-echo "batch_size,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens" > ./log/task4b_results.csv
+# 初始化 CSV 文件并写入表头（与 inference_core.py 写入顺序严格一致）
+TASK4A_HEADER="phase,frequency_mhz,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens"
+TASK4B_HEADER="batch_size,duration_s,ttft_s,tpot_s,avg_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens"
+echo "$TASK4A_HEADER" > ./log/task4a_results.csv
+echo "$TASK4B_HEADER" > ./log/task4b_results.csv
 
 echo "=========================================================="
 echo " Starting Task 4a: GPU Frequency Scaling Experiments"

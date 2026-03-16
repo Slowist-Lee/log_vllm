@@ -16,6 +16,16 @@ PAPER_STYLE_PROMPT_REPEAT = 3
 PREFILL_PROMPT_MULTIPLIER = 512
 DECODE_PROMPT_TEXT = "Write a concise explanation of why GPU power can drop during autoregressive decoding."
 
+
+def load_long_prompt(prompt_path="./prompt/long_prompt.txt"):
+    if os.path.exists(prompt_path):
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_text = f.read().strip()
+        if prompt_text:
+            return prompt_text
+    # 回退逻辑：防止 prompt 文件缺失导致脚本不可用。
+    return ("The quick brown fox jumps over the lazy dog " * PREFILL_PROMPT_MULTIPLIER).strip()
+
 class GPUMonitor:
     def __init__(self, interval=0.01):
         self.interval = interval
@@ -163,9 +173,8 @@ if __name__ == "__main__":
     print(f"Initializing vLLM with {model_path}...")
     # 关闭 chunked prefill，避免超长 prompt 被切碎后形成长时间锯齿功耗。
     llm = LLM(model=model_path, enforce_eager=True, enable_chunked_prefill=False) 
-    print("Using built-in prompts...")
-    long_base = "The quick brown fox jumps over the lazy dog "
-    paper_style_long_prompt = (long_base * PREFILL_PROMPT_MULTIPLIER).strip()
+    print("Loading long prompt from ./prompt/long_prompt.txt ...")
+    paper_style_long_prompt = load_long_prompt()
 
     # 参考论文设定：同一类请求重复多次，而不是每次都换一条长度差异很大的 prompt。
     long_prompts_list = [paper_style_long_prompt] * PAPER_STYLE_PROMPT_REPEAT
