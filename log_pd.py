@@ -2,13 +2,11 @@
 
 import os
 import time
-import threading
-import pynvml
-import pandas as pd
 import shutil
 
 import vllm
 from vllm import LLM, SamplingParams
+from gpu_utils import load_long_prompt, save_system_info, GPUMonitor
 
 
 WARMUP_PROMPT = "Hello, this is a warm up prompt."
@@ -16,122 +14,6 @@ PAPER_STYLE_PROMPT_REPEAT = 3
 PREFILL_PROMPT_MULTIPLIER = 512
 DECODE_PROMPT_TEXT = "Write a concise explanation of why GPU power can drop during autoregressive decoding."
 
-
-def load_long_prompt(prompt_path="./prompt/long_prompt.txt"):
-    if os.path.exists(prompt_path):
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            prompt_text = f.read().strip()
-        if prompt_text:
-            return prompt_text
-    # 回退逻辑：防止 prompt 文件缺失导致脚本不可用。
-    return ("The quick brown fox jumps over the lazy dog " * PREFILL_PROMPT_MULTIPLIER).strip()
-
-class GPUMonitor:
-    def __init__(self, interval=0.01):
-        self.interval = interval
-        self.data = []
-        self.running = False
-        self.handles = []
-        try:
-            pynvml.nvmlInit()
-            deviceCount = pynvml.nvmlDeviceGetCount()
-            for i in range(deviceCount):
-                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                self.handles.append(handle)
-            # 默认监控第一张显卡，如果需要全卡监控，逻辑需改为循环所有 handles
-            self.handle = self.handles[0] if self.handles else None
-            print(f"Successfully initialized {deviceCount} GPU(s).")
-            self.available = True
-        except pynvml.NVMLError as e:
-            print(f"NVML Initialization Failed: {e}")
-            self.available = False
-
-    def __enter__(self):
-        if not self.available:
-            return self
-        self.running = True
-        self.start_time = time.time()
-        self.thread = threading.Thread(target=self._monitor)
-        self.thread.start()
-        return self
-
-    def _monitor(self):
-        while self.running:
-            try:
-                current_time = time.time()
-                # 获取功耗 (单位：毫瓦 -> 瓦)
-                power = pynvml.nvmlDeviceGetPowerUsage(self.handle) / 1000.0
-                # 获取频率
-                gpu_clock = pynvml.nvmlDeviceGetClockInfo(self.handle, 0)
-                mem_clock = pynvml.nvmlDeviceGetClockInfo(self.handle, 2)
-                # 获取利用率
-                util_rates = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
-                util_gpu = util_rates.gpu
-                util_mem = util_rates.memory
-                
-                self.data.append({
-                    "timestamp": current_time,
-                    "time_offset": current_time - self.start_time,
-                    "power_w": power,
-                    "gpu_clock_mhz": gpu_clock,
-                    "mem_clock_mhz": mem_clock,
-                    "util_gpu_pct": util_gpu,
-                    "util_mem_pct": util_mem,
-                    "util_pct": util_gpu
-                })
-            except pynvml.NVMLError:
-                pass
-            time.sleep(self.interval)
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.running = False
-        if hasattr(self, 'thread'):
-            self.thread.join()
-
-    def save_and_calculate(self, filename, total_output_tokens, input_text=None, output_text=None):
-        if not self.data:
-            print("No GPU data collected.")
-            return
-
-        df = pd.DataFrame(self.data)
-        # 计算实际时间间隔
-        df['time_interval'] = df['timestamp'].diff().fillna(self.interval)
-        # 能耗 (J) = 功率 (W) * 时间间隔 (s)
-        df['energy_j'] = df['power_w'] * df['time_interval']
-        total_energy = df['energy_j'].sum()
-        
-        # 确保保存路径存在
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        df.to_csv(filename, index=False)
-        
-        # 保存输入输出对到单独的CSV文件
-        if input_text is not None and output_text is not None:
-            io_filename = filename.replace("_power_log.csv", "_io_log.csv")
-            # 构造输入输出数据
-            io_data = {
-                "input_text": [input_text],
-                "output_text": [output_text],
-                "total_output_tokens": [total_output_tokens],
-                "total_energy_j": [total_energy],
-                "energy_per_token_j": [total_energy/total_output_tokens if total_output_tokens>0 else 0]
-            }
-            io_df = pd.DataFrame(io_data)
-            # 如果文件已存在则追加，否则新建
-            if os.path.exists(io_filename):
-                io_df.to_csv(io_filename, mode='a', header=False, index=False)
-            else:
-                io_df.to_csv(io_filename, index=False)
-        
-        duration = df['time_offset'].iloc[-1]
-        avg_power = df['power_w'].mean()
-        
-        print(f"\n--- Energy Analysis ---")
-        print(f"Total Time: {duration:.2f} s")
-        print(f"Average Power: {avg_power:.2f} W")
-        print(f"Total Energy: {total_energy:.2f} J")
-        print(f"Total Output Tokens: {total_output_tokens}")
-        if total_output_tokens > 0:
-            print(f"Energy per Token: {total_energy/total_output_tokens:.4f} J/token")
 
 def check_disk_space(min_gb=2):
     """防止磁盘再次写满导致系统崩溃"""
@@ -141,29 +23,6 @@ def check_disk_space(min_gb=2):
         print(f"❌ Disk space too low ({free_gb:.2f} GB left). Aborting.")
         return False
     return True
-
-def print_system_info(model_name):
-    os.makedirs("./log", exist_ok=True)
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    gpu_name = pynvml.nvmlDeviceGetName(handle)
-    if isinstance(gpu_name, bytes): gpu_name = gpu_name.decode('utf-8')
-    driver = pynvml.nvmlSystemGetDriverVersion()
-    if isinstance(driver, bytes): driver = driver.decode('utf-8')
-
-    info_lines = [
-        "=== Environment Info ===",
-        f"GPU: {gpu_name} | Driver: {driver}",
-        f"Model: {model_name} | vLLM: {vllm.__version__}",
-        "========================",
-    ]
-    
-    print("\n" + "\n".join(info_lines) + "\n")
-
-    env_path = "./log/system_info_log_pd.txt"
-    with open(env_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(info_lines) + "\n")
-    print(f"Environment info saved to: {env_path}")
 
 
 def run_warmup(llm: LLM) -> None:
@@ -178,7 +37,7 @@ if __name__ == "__main__":
         exit(1)
 
     model_path = "./mistral_7b_model/LLM-Research/Mistral-7B-v0.3" 
-    print_system_info(model_path)
+    save_system_info(model_path, script_name="log_pd")
 
     print(f"Initializing vLLM with {model_path}...")
     # 关闭 chunked prefill，避免超长 prompt 被切碎后形成长时间锯齿功耗。
@@ -207,7 +66,7 @@ if __name__ == "__main__":
     for idx, long_prompt in enumerate(long_prompts_list):
         print(f"\n>>> Processing Long Prompt [{idx + 1}/{len(long_prompts_list)}]")
         
-        with GPUMonitor(interval=0.01) as prefill_monitor:
+        with GPUMonitor(interval=0.01, monitor_clock=True) as prefill_monitor:
             output_prefill = llm.generate([long_prompt], prefill_params)
 
         # 提取生成的 token 数量和输出文本
@@ -231,7 +90,7 @@ if __name__ == "__main__":
     for idx, short_prompt in enumerate(short_prompts_list):
         print(f"\n>>> Processing Short Prompt [{idx + 1}/{len(short_prompts_list)}]")
         
-        with GPUMonitor(interval=0.01) as decode_monitor:
+        with GPUMonitor(interval=0.01, monitor_clock=True) as decode_monitor:
             output_decode = llm.generate([short_prompt], decode_params)
 
         # 提取生成的 token 数量和输出文本

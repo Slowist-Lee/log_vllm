@@ -2,60 +2,54 @@
 
 import time
 import os
+import inspect
 import pandas as pd
-import pynvml
 import vllm
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
 from vllm import SamplingParams
-
-
-def save_system_info(model_name, script_name="interference"):
-    os.makedirs("./log", exist_ok=True)
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-    gpu_name = pynvml.nvmlDeviceGetName(handle)
-    if isinstance(gpu_name, bytes):
-        gpu_name = gpu_name.decode("utf-8")
-    driver = pynvml.nvmlSystemGetDriverVersion()
-    if isinstance(driver, bytes):
-        driver = driver.decode("utf-8")
-
-    info_lines = [
-        "=== Environment Info ===",
-        f"GPU: {gpu_name} | Driver: {driver}",
-        f"Model: {model_name} | vLLM: {vllm.__version__}",
-        "========================",
-    ]
-    print("\n" + "\n".join(info_lines) + "\n")
-
-    out_path = f"./log/system_info_{script_name}.txt"
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(info_lines) + "\n")
-    print(f"Environment info saved to: {out_path}")
+from gpu_utils import save_system_info, load_long_prompt
 
 def setup_engine(model_path):
     print(f"Initializing LLMEngine with model: {model_path}...")
     # 启用 eager mode 减少小 batch 下 CUDA Graph 的额外开销干扰
     # 关闭 chunked prefill 以确保完整的长序列 Prefill 会在单个 step 内计算
-    engine_args = EngineArgs(
-        model=model_path, 
-        enforce_eager=True,
-        enable_chunked_prefill=False,
-        disable_log_requests=True, # 关闭请求日志防止刷屏
-        max_num_seqs=512,          # 确保调度器容量足够
-        max_num_batched_tokens=8192 # 确保能同时塞下长 Prefill 和几十个 Decode
-    )
+    engine_kwargs = {
+        "model": model_path,
+        "enforce_eager": True,
+        "enable_chunked_prefill": False,
+        "max_num_seqs": 512,           # 确保调度器容量足够
+        "max_num_batched_tokens": 8192 # 确保能同时塞下长 Prefill 和几十个 Decode
+    }
+
+    arg_names = inspect.signature(EngineArgs).parameters
+    if "disable_log_requests" in arg_names:
+        engine_kwargs["disable_log_requests"] = True
+    if "max_model_len" in arg_names:
+        # 避免 max_num_batched_tokens < max_model_len 触发调度配置报错。
+        engine_kwargs["max_model_len"] = engine_kwargs["max_num_batched_tokens"]
+
+    engine_args = EngineArgs(**engine_kwargs)
     return LLMEngine.from_engine_args(engine_args)
+
+# 与 log_pd.py 保持一致的 prompt 设置
+DECODE_PROMPT_TEXT = "Write a concise explanation of why GPU power can drop during autoregressive decoding."
 
 def run_interference_test(engine, batch_sizes, prefill_length=1024):
     """
     运行干扰测试，模拟纯 Decode 状态与插入长 Prefill 后的状态。
     """
-    # 构造虚假的长短 Prompt
-    # 假设平均 1 token ≈ 4-5 字符，这里用简单字符串近似，也可以用 tokenizer 传 token_ids
-    short_prompt = "The quick brown fox " 
-    long_prompt = "The quick brown fox " * (prefill_length // 4) 
+    # 使用与 log_pd.py 相同的真实 prompt
+    short_prompt = DECODE_PROMPT_TEXT
+    
+    # 加载长 prompt 并根据需要截断到指定长度
+    full_long_prompt = load_long_prompt()
+    # 根据 prefill_length 估算字符数 (假设平均 1 token ≈ 4 字符)
+    target_chars = prefill_length * 4
+    if len(full_long_prompt) > target_chars:
+        long_prompt = full_long_prompt[:target_chars]
+    else:
+        long_prompt = full_long_prompt 
     
     # 设置生成参数，ignore_eos=True 确保 Decode 任务不会提前结束
     sampling_params = SamplingParams(temperature=0.0, max_tokens=100, ignore_eos=True)

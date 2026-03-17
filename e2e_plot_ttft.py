@@ -134,8 +134,8 @@ def plot_ttft_profile(df: pd.DataFrame, ttft_s: float, output_png: str, title: s
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="绘制带 TTFT 分界线的功耗/频率时序图")
-    parser.add_argument("--input-csv", type=str, default="./log/e2e_ttft_profile.csv")
-    parser.add_argument("--output-png", type=str, default="./log/e2e_ttft_profile.png")
+    parser.add_argument("--input-csv", type=str, default="./log/log_03_16_2/e2e_ttft_profile.csv")
+    parser.add_argument("--output-png", type=str, default="./e2e_ttft_profile.png")
     parser.add_argument("--title", type=str, default="End-to-End Inference: Power & Frequency with TTFT")
     return parser.parse_args()
 

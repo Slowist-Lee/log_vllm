@@ -13,14 +13,19 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
 
 
-def load_long_prompt(prompt_path: str) -> str:
-    """优先读取真实长提示词文件，避免使用无意义重复文本。"""
-    if os.path.exists(prompt_path):
-        with open(prompt_path, "r", encoding="utf-8") as f:
-            text = f.read().strip()
-        if text:
-            return text
-    raise FileNotFoundError(f"Prompt 文件不存在或为空: {prompt_path}")
+def load_prompt_by_length(base_prompt: str, target_length: int) -> str:
+    """根据目标长度生成提示词"""
+    # 计算基础提示词的长度
+    base_length = len(base_prompt)
+    if base_length >= target_length:
+        return base_prompt[:target_length]
+    
+    # 重复基础提示词直到达到目标长度
+    repeated_prompt = base_prompt
+    while len(repeated_prompt) < target_length:
+        repeated_prompt += " " + base_prompt
+    
+    return repeated_prompt[:target_length]
 
 
 class GPUSampler:
@@ -111,7 +116,7 @@ def build_engine(
     return LLMEngine.from_engine_args(engine_args)
 
 
-def save_system_info(model_name: str, script_name: str = "e2e_profile_ttft") -> None:
+def save_system_info(model_name: str, script_name: str = "input_profile") -> None:
     os.makedirs("./log", exist_ok=True)
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(0)
@@ -128,7 +133,7 @@ def save_system_info(model_name: str, script_name: str = "e2e_profile_ttft") -> 
         "=== Environment Info ===",
         f"GPU: {gpu_name} | Driver: {driver}",
         f"Model: {model_name} | vLLM: {vllm.__version__}",
-        "========================",
+        "=======================",
     ]
     print("\n" + "\n".join(info_lines) + "\n")
 
@@ -209,6 +214,7 @@ def annotate_and_save(
     out_csv: str,
     meta: dict,
     sample_interval: float,
+    input_length: int,
 ) -> None:
     if df.empty:
         raise RuntimeError("GPU 采样为空，请检查 NVML 是否可用或采样间隔是否过大。")
@@ -234,6 +240,7 @@ def annotate_and_save(
     df["total_duration_s"] = meta["total_duration_s"]
     df["prompt_tokens"] = meta["prompt_token_count"]
     df["output_tokens"] = meta["output_token_count"]
+    df["input_length"] = input_length
     df["total_energy_j"] = total_energy
     df["j_per_output_token"] = j_per_token
 
@@ -245,30 +252,47 @@ def annotate_and_save(
 
     prefill_energy = float(prefill_df["energy_j"].sum()) if not prefill_df.empty else 0.0
     decode_energy = float(decode_df["energy_j"].sum()) if not decode_df.empty else 0.0
+    peak_power = float(df["power_w"].max())
 
-    print("\n========== E2E Profiling Summary ==========")
+    print("\n========== Input Profile Summary ==========")
+    print(f"Input length: {input_length}")
     print(f"Output CSV: {out_csv}")
     print(f"TTFT: {ttft_s:.4f} s")
     print(f"Total duration: {meta['total_duration_s']:.4f} s")
     print(f"Prompt tokens: {meta['prompt_token_count']}")
     print(f"Output tokens: {meta['output_token_count']}")
+    print(f"Peak power: {peak_power:.2f} W")
     print(f"Total energy: {total_energy:.4f} J")
     print(f"J/token: {j_per_token:.6f}")
     print(f"Prefill energy: {prefill_energy:.4f} J")
     print(f"Decode energy: {decode_energy:.4f} J")
     print("==========================================\n")
 
+    return {
+        "input_length": input_length,
+        "prompt_tokens": meta["prompt_token_count"],
+        "output_tokens": meta["output_token_count"],
+        "ttft_s": ttft_s,
+        "total_duration_s": meta["total_duration_s"],
+        "peak_power_w": peak_power,
+        "total_energy_j": total_energy,
+        "j_per_token": j_per_token,
+        "prefill_energy_j": prefill_energy,
+        "decode_energy_j": decode_energy,
+    }
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="端到端 LLM 推理功耗采样（含 TTFT 打点）")
+    parser = argparse.ArgumentParser(description="测试不同输入大小对GPU功耗和延迟的影响")
     parser.add_argument("--model", type=str, default="./mistral_7b_model/LLM-Research/Mistral-7B-v0.3")
-    parser.add_argument("--prompt-file", type=str, default="./prompt/long_prompt.txt")
-    parser.add_argument("--max-tokens", type=int, default=512)
+    parser.add_argument("--base-prompt", type=str, default="The quick brown fox jumps over the lazy dog.")
+    parser.add_argument("--input-lengths", type=int, nargs="+", default=[128, 256, 512, 1024, 2048], help="要测试的输入长度列表")
+    parser.add_argument("--max-tokens", type=int, default=128, help="生成的最大token数")
     parser.add_argument("--sample-interval", type=float, default=0.05, help="采样周期（秒），建议 0.01~0.1")
     parser.add_argument("--gpu-index", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--top-p", type=float, default=1.0)
-    parser.add_argument("--output-csv", type=str, default="./log/e2e_ttft_profile.csv")
+    parser.add_argument("--output-dir", type=str, default="./log")
     parser.add_argument("--warmup", action="store_true", help="先做一次短预热，减少首次加载抖动")
     parser.add_argument("--max-num-seqs", type=int, default=32)
     parser.add_argument("--max-num-batched-tokens", type=int, default=8192)
@@ -278,13 +302,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="可选：显式覆盖 vLLM max_model_len；默认与 max-num-batched-tokens 对齐以避免调度报错",
     )
-    parser.add_argument("--load-levels", type=int, nargs="*", help="不同负载水平（输入token数），如果指定则执行负载扫描实验")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    save_system_info(args.model, script_name="e2e_profile_ttft")
+    save_system_info(args.model, script_name="input_profile")
 
     engine = build_engine(
         model_path=args.model,
@@ -302,62 +325,15 @@ def main() -> None:
             if done:
                 break
 
-    # 存储所有负载水平的结果
+    # 存储所有输入长度的结果
     all_results = []
 
-    if args.load_levels:
-        print(f"\n=== Starting load level scan: {args.load_levels} tokens ===")
-        for load_level in args.load_levels:
-            print(f"\n--- Testing load level: {load_level} tokens ---")
-            
-            # 生成指定长度的提示词
-            base_prompt = "The quick brown fox jumps over the lazy dog. "
-            prompt = base_prompt * (load_level // len(base_prompt) + 1)
-            prompt = prompt[:load_level]
-            
-            sampler = GPUSampler(gpu_index=args.gpu_index, interval_s=args.sample_interval)
-            sampler.start()
-            try:
-                meta = run_one_request_with_ttft(
-                    engine=engine,
-                    prompt=prompt,
-                    max_tokens=args.max_tokens,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                )
-            finally:
-                sampler.stop()
-
-            df = sampler.to_dataframe()
-            out_csv = f"./log/e2e_load_profile_{load_level}.csv"
-            annotate_and_save(df=df, out_csv=out_csv, meta=meta, sample_interval=args.sample_interval)
-            
-            # 计算并存储关键指标
-            peak_power = df["power_w"].max()
-            avg_power = df["power_w"].mean()
-            total_energy = df["energy_j"].sum()
-            
-            all_results.append({
-                "load_level": load_level,
-                "peak_power_w": peak_power,
-                "avg_power_w": avg_power,
-                "total_energy_j": total_energy,
-                "ttft_s": meta["ttft_s"],
-                "total_duration_s": meta["total_duration_s"],
-                "output_tokens": meta["output_token_count"]
-            })
-
-        # 保存汇总结果
-        summary_df = pd.DataFrame(all_results)
-        summary_csv = "./log/e2e_load_profile_summary.csv"
-        summary_df.to_csv(summary_csv, index=False)
-        print(f"\nSummary saved to: {summary_csv}")
-        print("\n========== Load Profile Summary ==========")
-        print(summary_df)
-        print("=======================================")
-    else:
-        # 原始单请求模式
-        prompt = load_long_prompt(args.prompt_file)
+    for input_length in args.input_lengths:
+        print(f"\n=== Testing input length: {input_length} ===")
+        
+        # 生成指定长度的提示词
+        prompt = load_prompt_by_length(args.base_prompt, input_length)
+        
         sampler = GPUSampler(gpu_index=args.gpu_index, interval_s=args.sample_interval)
         sampler.start()
         try:
@@ -372,7 +348,26 @@ def main() -> None:
             sampler.stop()
 
         df = sampler.to_dataframe()
-        annotate_and_save(df=df, out_csv=args.output_csv, meta=meta, sample_interval=args.sample_interval)
+        out_csv = os.path.join(args.output_dir, f"input_profile_{input_length}.csv")
+        result = annotate_and_save(
+            df=df, 
+            out_csv=out_csv, 
+            meta=meta, 
+            sample_interval=args.sample_interval,
+            input_length=input_length
+        )
+        all_results.append(result)
+
+    # 保存汇总结果
+    summary_df = pd.DataFrame(all_results)
+    summary_csv = os.path.join(args.output_dir, "input_profile_summary.csv")
+    summary_df.to_csv(summary_csv, index=False)
+    print(f"\nSummary saved to: {summary_csv}")
+
+    # 打印汇总表格
+    print("\n========== Summary Table ==========")
+    print(summary_df)
+    print("==================================")
 
 
 if __name__ == "__main__":

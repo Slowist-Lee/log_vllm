@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 # ==========================================
 # 请确保这里的文件路径与你实际保存的一致
 try:
-    df_prefill = pd.read_csv("./log/prefill_3_power_log.csv")
-    df_decode = pd.read_csv("./log/decode_3_power_log.csv")
+    df_prefill = pd.read_csv("./log/log_03_16_2/prefill_3_power_log.csv")
+    df_decode = pd.read_csv("./log/log_03_16_2/decode_3_power_log.csv")
 except FileNotFoundError:
     print("找不到 CSV 文件，请检查路径是否正确。")
     exit()
@@ -37,8 +37,8 @@ def normalize_util_columns(df: pd.DataFrame, name: str) -> pd.DataFrame:
     return df
 
 
-df_prefill = normalize_util_columns(df_prefill, "./log/prefill_3_power_log.csv")
-df_decode = normalize_util_columns(df_decode, "./log/decode_3_power_log.csv")
+df_prefill = normalize_util_columns(df_prefill, "./log/log_03_16/prefill_3_power_log.csv")
+df_decode = normalize_util_columns(df_decode, "./log/log_03_16/decode_3_power_log.csv")
 
 required_columns = [
     "time_offset",
@@ -47,8 +47,8 @@ required_columns = [
     "util_gpu_pct",
 ]
 
-validate_columns(df_prefill, "./log/prefill_3_power_log.csv", required_columns)
-validate_columns(df_decode, "./log/decode_3_power_log.csv", required_columns)
+validate_columns(df_prefill, "./log/log_03_16/prefill_3_power_log.csv", required_columns)
+validate_columns(df_decode, "./log/log_03_16/decode_3_power_log.csv", required_columns)
 
 # 仅保留绘图需要的数值列，避免字符串或异常值导致绘图失败
 for col in required_columns:
@@ -89,6 +89,50 @@ ax1.set_ylim(bottom=0) # Y轴从0开始
 fig1.tight_layout()
 fig1.savefig("./task3_power_comparison.png")
 print("成功生成功率对比图：./task3_power_comparison.png")
+
+# ==========================================
+# 图表 A-zoom：0-2 秒局部放大图
+# ==========================================
+df_prefill_zoom = df_prefill[df_prefill["time_offset"] <= 2].copy()
+df_decode_zoom = df_decode[df_decode["time_offset"] <= 2].copy()
+
+if not df_prefill_zoom.empty and not df_decode_zoom.empty:
+    fig1_zoom, ax1_zoom = plt.subplots(figsize=(10, 5), dpi=150)
+
+    ax1_zoom.plot(
+        df_prefill_zoom["time_offset"],
+        df_prefill_zoom["power_w"],
+        label="Prefill Phase (Long Input, 1 Token)",
+        color="#D62728",
+        linewidth=2.5,
+        zorder=3,
+    )
+    ax1_zoom.plot(
+        df_decode_zoom["time_offset"],
+        df_decode_zoom["power_w"],
+        label="Decode Phase (Short Input, 512 Tokens)",
+        color="#1F77B4",
+        linewidth=2,
+        alpha=0.8,
+        zorder=2,
+    )
+
+    zoom_power = pd.concat([df_prefill_zoom["power_w"], df_decode_zoom["power_w"]])
+    y_min = max(0, zoom_power.min() - 10)
+    y_max = zoom_power.max() + 10
+
+    ax1_zoom.set_title("Task 3: Power Consumption Profile (0-2s Zoom)", fontsize=14, fontweight="bold", pad=15)
+    ax1_zoom.set_xlabel("Time (seconds)", fontsize=12)
+    ax1_zoom.set_ylabel("GPU Power (Watts)", fontsize=12)
+    ax1_zoom.legend(loc="upper right", fontsize=11, frameon=True, shadow=True)
+    ax1_zoom.set_xlim(0, 2)
+    ax1_zoom.set_ylim(y_min, y_max)
+
+    fig1_zoom.tight_layout()
+    fig1_zoom.savefig("./task3_power_comparison_zoom_2s.png")
+    print("成功生成 2 秒放大图：./task3_power_comparison_zoom_2s.png")
+else:
+    print("2 秒内数据不足，未生成放大图。")
 
 # ==========================================
 # 图表 B：硬件底层特征图 (展示利用率和频率差异)

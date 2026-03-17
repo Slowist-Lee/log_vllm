@@ -42,7 +42,7 @@ try:
             # 按空格分割成单词列表
             words_list = combined_text.split()
             # 截取前10000个单词
-            top_10000_words = words_list[:10000]
+            top_10000_words = words_list[:2048]
             # 重新拼接成文本
             final_content = ' '.join(top_10000_words)
             
