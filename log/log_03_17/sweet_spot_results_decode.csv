@@ -1,0 +1,5 @@
+phase,frequency_mhz,duration_s,ttft_s,tpot_s,avg_power_w,peak_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens,tpj,input_tokens,repeat_count
+Decode,500,14.9358,15.0122,0.0,60.2,62.99,903.7048,17.14,3.5301,256,0.2833,3
+Decode,700,10.0801,10.1571,0.0,75.19,78.05,763.6574,25.4,2.983,256,0.3352,3
+Decode,900,6.9313,7.0076,0.0,96.5,102.82,676.1596,36.93,2.6412,256,0.3786,3
+Decode,1100,6.7779,6.8541,0.0,111.74,120.18,765.7496,37.77,2.9912,256,0.3343,3

@@ -11,20 +11,22 @@ import vllm
 from vllm import SamplingParams
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
+from gpu_utils import load_long_prompt
 
 
-def load_prompt_by_length(base_prompt: str, target_length: int) -> str:
-    """根据目标长度生成提示词"""
-    # 计算基础提示词的长度
-    base_length = len(base_prompt)
-    if base_length >= target_length:
-        return base_prompt[:target_length]
-    
-    # 重复基础提示词直到达到目标长度
-    repeated_prompt = base_prompt
+def load_prompt_by_length(long_prompt: str, target_length: int) -> str:
+    """从统一长提示词中截取目标长度文本。"""
+    if target_length <= 0:
+        return ""
+
+    if len(long_prompt) >= target_length:
+        return long_prompt[:target_length]
+
+    # 极端情况下目标长度超过长提示词时，循环拼接后再截断，避免空洞输入。
+    repeated_prompt = long_prompt
     while len(repeated_prompt) < target_length:
-        repeated_prompt += " " + base_prompt
-    
+        repeated_prompt += " " + long_prompt
+
     return repeated_prompt[:target_length]
 
 
@@ -285,7 +287,7 @@ def annotate_and_save(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="测试不同输入大小对GPU功耗和延迟的影响")
     parser.add_argument("--model", type=str, default="./mistral_7b_model/LLM-Research/Mistral-7B-v0.3")
-    parser.add_argument("--base-prompt", type=str, default="The quick brown fox jumps over the lazy dog.")
+    parser.add_argument("--prompt-path", type=str, default="./prompt/long_prompt.txt", help="长提示词文件路径")
     parser.add_argument("--input-lengths", type=int, nargs="+", default=[128, 256, 512, 1024, 2048], help="要测试的输入长度列表")
     parser.add_argument("--max-tokens", type=int, default=128, help="生成的最大token数")
     parser.add_argument("--sample-interval", type=float, default=0.05, help="采样周期（秒），建议 0.01~0.1")
@@ -309,6 +311,9 @@ def main() -> None:
     args = parse_args()
     save_system_info(args.model, script_name="input_profile")
 
+    base_prompt = load_long_prompt(args.prompt_path)
+    print(f"Loaded long prompt from: {args.prompt_path} (chars={len(base_prompt)})")
+
     engine = build_engine(
         model_path=args.model,
         max_num_seqs=args.max_num_seqs,
@@ -331,8 +336,8 @@ def main() -> None:
     for input_length in args.input_lengths:
         print(f"\n=== Testing input length: {input_length} ===")
         
-        # 生成指定长度的提示词
-        prompt = load_prompt_by_length(args.base_prompt, input_length)
+        # 从统一长提示词中按目标长度截取输入，和 log_pd 实验口径对齐。
+        prompt = load_prompt_by_length(base_prompt, input_length)
         
         sampler = GPUSampler(gpu_index=args.gpu_index, interval_s=args.sample_interval)
         sampler.start()

@@ -70,6 +70,58 @@ def run_e2e_request(engine: LLMEngine, prompt: str, max_tokens: int = 256) -> di
     }
 
 
+def run_batch_e2e_requests(engine: LLMEngine, prompts: list, max_tokens: int = 128) -> dict:
+    """处理 Batch 请求，精确测量所有请求的平均 TTFT 和 TPOT"""
+    req_ids = []
+    sampling_params = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
+    
+    # 1. 将整个 Batch 的请求同时加入引擎
+    for i, prompt in enumerate(prompts):
+        req_id = f"batch-req-{i}"
+        engine.add_request(request_id=req_id, prompt=prompt, params=sampling_params)
+        req_ids.append(req_id)
+
+    t0 = time.perf_counter()
+    
+    # 用于记录每个请求的状态
+    ttft_dict = {rid: None for rid in req_ids}
+    finished_dict = {rid: False for rid in req_ids}
+    total_output_tokens = 0
+
+    # 2. 步进引擎，直到所有请求完成
+    while not all(finished_dict.values()):
+        step_outputs = engine.step()
+        now = time.perf_counter()
+
+        for out in step_outputs:
+            rid = out.request_id
+            generated_len = len(out.outputs[0].token_ids) if out.outputs else 0
+            
+            # 捕获每个请求的 TTFT
+            if ttft_dict[rid] is None and generated_len > 0:
+                ttft_dict[rid] = now - t0
+                
+            if out.finished:
+                finished_dict[rid] = True
+                total_output_tokens += generated_len
+
+    total_duration_s = time.perf_counter() - t0
+
+    # 3. 计算 Batch 的平均统计数据
+    valid_ttfts = [t for t in ttft_dict.values() if t is not None]
+    mean_ttft_s = sum(valid_ttfts) / len(valid_ttfts) if valid_ttfts else total_duration_s
+    
+    # TPOT = (总耗时 - 平均首字延迟) / 平均生成的Token数
+    mean_tpot_s = max(total_duration_s - mean_ttft_s, 0.0) / max((total_output_tokens / len(prompts)), 1)
+
+    return {
+        "mean_ttft_s": round(mean_ttft_s, 4),
+        "total_duration_s": round(total_duration_s, 4),
+        "mean_tpot_s": round(mean_tpot_s, 6),
+        "total_output_tokens": total_output_tokens,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", type=str, required=True, choices=["4a", "4a_e2e", "4b"])
@@ -88,14 +140,13 @@ def main():
     # 3. 执行对应的 Task
     os.makedirs("./log", exist_ok=True)
 
-    if args.task in ("4a", "4b"):
-        # 高层 LLM API：4a（PD 分别测试）和 4b（Batch 测试）共用
+    if args.task == "4a":
+        # Task 4a 保留高层 API
         llm = LLM(model=model_path, enforce_eager=True)
         llm.generate([decode_prompt], SamplingParams(max_tokens=10), use_tqdm=False)
         time.sleep(2)
-
-    elif args.task == "4a_e2e":
-        # 低层 LLMEngine API：用 step() 精确捕获 TTFT 的完整推理
+        
+    elif args.task in ("4a_e2e", "4b"): # 让 4b 和 4a_e2e 共用底层 Engine
         engine = build_engine(model_path)
         # 预热
         warmup_params = SamplingParams(temperature=0.0, max_tokens=8)
@@ -162,33 +213,28 @@ def main():
             )
 
     elif args.task == "4b":
-        # === Batch Size 测试 ===
-        batch_params = SamplingParams(temperature=0.0, max_tokens=128, ignore_eos=True)
+        # === Batch Size 测试 (使用精确步进抓取TTFT) ===
         prompts = [prefill_prompt] * args.bs  # 复制长输入构建 Batch
         
-        start_batch = time.perf_counter()
         with GPUMonitor() as monitor:
-            outs = llm.generate(prompts, batch_params, use_tqdm=False)
-        batch_duration = time.perf_counter() - start_batch
-        
-        total_tokens = sum([len(o.outputs[0].token_ids) for o in outs])
-        m_batch = monitor.get_metrics(total_tokens)
-
-        # Batch 模式下做平均 TTFT/TPOT，便于横向比较。
-        ttft_list = []
-        for o in outs:
-            o_tokens = len(o.outputs[0].token_ids)
-            ttft_s, _ = extract_ttft_tpot(o, batch_duration, o_tokens)
-            ttft_list.append(ttft_s)
-
-        mean_ttft_s = round(sum(ttft_list) / len(ttft_list), 4) if ttft_list else round(batch_duration, 4)
-        mean_tpot_s = round(max(batch_duration - mean_ttft_s, 0.0) / max(total_tokens, 1), 6)
+            # 使用刚才新写的 Batch 处理函数
+            batch_result = run_batch_e2e_requests(engine, prompts, max_tokens=128)
+            
+        m_batch = monitor.get_metrics(batch_result["total_output_tokens"])
 
         # 保存结果到 CSV
         with open("./log/task4b_results.csv", "a") as f:
             f.write(
-                f"{args.bs},{m_batch['duration_s']},{mean_ttft_s},{mean_tpot_s},{m_batch['avg_power_w']},{m_batch['peak_power_w']},"
-                f"{m_batch['total_energy_j']},{m_batch['throughput_tps']},{m_batch['j_per_token']},{total_tokens}\n"
+                f"{args.bs},"
+                f"{m_batch['duration_s']},"
+                f"{batch_result['mean_ttft_s']},"
+                f"{batch_result['mean_tpot_s']},"
+                f"{m_batch['avg_power_w']},"
+                f"{m_batch['peak_power_w']},"
+                f"{m_batch['total_energy_j']},"
+                f"{m_batch['throughput_tps']},"
+                f"{m_batch['j_per_token']},"
+                f"{batch_result['total_output_tokens']}\n"
             )
 
 if __name__ == "__main__":

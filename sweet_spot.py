@@ -215,11 +215,8 @@ def main():
         """
     )
     
-    # 频率范围参数
-    parser.add_argument("--start", type=int, default=600, help="起始频率 (MHz)，默认 600")
-    parser.add_argument("--end", type=int, default=1500, help="结束频率 (MHz)，默认 1500")
-    parser.add_argument("--step", type=int, default=50, help="频率步长 (MHz)，默认 50")
-    parser.add_argument("--frequencies", type=int, nargs="+", help="直接指定频率列表（覆盖 start/end/step）")
+    # 单个频率参数
+    parser.add_argument("--freq", type=int, required=True, help="测试频率 (MHz)")
     
     # 测试参数
     parser.add_argument("--repeat", type=int, default=3, help="每个频率重复测试次数，默认 3")
@@ -237,17 +234,14 @@ def main():
     
     args = parser.parse_args()
     
-    # 确定频率列表
-    if args.frequencies:
-        frequencies = sorted(args.frequencies)
-    else:
-        frequencies = list(range(args.start, args.end + 1, args.step))
+    # 使用单个频率
+    freq = args.freq
     
-    print(f"[*] Sweet Spot 频率扫描")
-    print(f"[*] 测试频率: {frequencies}")
-    print(f"[*] 每个频率重复: {args.repeat} 次")
+    print(f"[*] Sweet Spot 频率测试")
+    print(f"[*] 测试频率: {freq} MHz")
+    print(f"[*] 重复测试: {args.repeat} 次")
     print(f"[*] 测试阶段: {args.phases}")
-    print(f"[*] 总测试次数: {len(frequencies) * args.repeat * len(args.phases)}")
+    print(f"[*] 总测试次数: {args.repeat * len(args.phases)}")
     
     # 加载 prompt
     prefill_prompt = load_long_prompt()
@@ -288,113 +282,85 @@ def main():
                         break
                 time.sleep(2)
         
-        # 开始频率扫描
+        # 开始频率测试
         print(f"\n{'='*80}")
-        print(" 开始频率扫描")
+        print(f" 开始测试频率: {freq} MHz")
         print(f"{'='*80}")
         
-        for freq_idx, freq in enumerate(frequencies):
-            print(f"\n[{freq_idx+1}/{len(frequencies)}] 测试频率: {freq} MHz")
+        for repeat_idx in range(args.repeat):
+            print(f"\n[重复 {repeat_idx+1}/{args.repeat}]")
             
-            # 设置频率
-            if not set_gpu_frequency(freq):
-                print(f"[WARNING] 跳过频率 {freq} MHz")
-                continue
+            # Prefill 测试
+            if "prefill" in args.phases:
+                result = run_prefill_test(llm, prefill_prompt, freq)
+                all_results.append(result)
+                print("  Prefill 测试完成")
             
-            for repeat_idx in range(args.repeat):
-                print(f"  重复 {repeat_idx+1}/{args.repeat}...", end=" ")
-                
-                # Prefill 测试
-                if "prefill" in args.phases:
-                    result = run_prefill_test(llm, prefill_prompt, freq)
-                    all_results.append(result)
-                
-                time.sleep(1)
-                
-                # Decode 测试
-                if "decode" in args.phases:
-                    result = run_decode_test(llm, decode_prompt, freq, args.decode_tokens)
-                    all_results.append(result)
-                
-                time.sleep(1)
-                
-                # E2E 测试
-                if "e2e" in args.phases:
-                    result = run_e2e_test(engine, prefill_prompt, freq, args.decode_tokens)
-                    all_results.append(result)
-                
-                print("✓")
-                time.sleep(1)
+            time.sleep(1)
+            
+            # Decode 测试
+            if "decode" in args.phases:
+                result = run_decode_test(llm, decode_prompt, freq, args.decode_tokens)
+                all_results.append(result)
+                print("  Decode 测试完成")
+            
+            time.sleep(1)
+            
+            # E2E 测试
+            if "e2e" in args.phases:
+                result = run_e2e_test(engine, prefill_prompt, freq, args.decode_tokens)
+                all_results.append(result)
+                print("  E2E 测试完成")
+            
+            time.sleep(1)
         
-        # 重置频率
-        reset_gpu_frequency()
-        
-        # 保存原始结果到 CSV
+        # 保存原始结果到 CSV（追加模式）
         if all_results:
             df = pd.DataFrame(all_results)
-            df.to_csv(args.output, index=False)
+            mode = 'a' if os.path.exists(args.output) else 'w'
+            header = not os.path.exists(args.output)
+            df.to_csv(args.output, index=False, mode=mode, header=header)
             print(f"\n[*] 原始结果已保存: {args.output}")
         
-        # 计算每个频率的平均值
+        # 计算每个频率的平均值（仅针对当前频率）
         if all_results:
             print(f"\n{'='*80}")
-            print(" 按频率汇总结果（平均值）")
+            print(f" 频率 {freq} MHz 测试结果（平均值）")
             print(f"{'='*80}")
             
             df = pd.DataFrame(all_results)
             
-            # 按 phase 和 frequency 分组计算平均值
+            # 按 phase 分组计算平均值
             summary_rows = []
             for phase in df['phase'].unique():
                 phase_df = df[df['phase'] == phase]
-                for freq in phase_df['frequency_mhz'].unique():
-                    freq_df = phase_df[phase_df['frequency_mhz'] == freq]
-                    avg_row = {
-                        'phase': phase,
-                        'frequency_mhz': freq,
-                        'duration_s': round(freq_df['duration_s'].mean(), 4),
-                        'ttft_s': round(freq_df['ttft_s'].mean(), 4),
-                        'tpot_s': round(freq_df['tpot_s'].mean(), 6),
-                        'avg_power_w': round(freq_df['avg_power_w'].mean(), 2),
-                        'peak_power_w': round(freq_df['peak_power_w'].mean(), 2),
-                        'total_energy_j': round(freq_df['total_energy_j'].mean(), 4),
-                        'throughput_tps': round(freq_df['throughput_tps'].mean(), 2),
-                        'j_per_token': round(freq_df['j_per_token'].mean(), 4),
-                        'total_output_tokens': int(freq_df['total_output_tokens'].mean()),
-                        'tpj': round(freq_df['tpj'].mean(), 4),
-                        'repeat_count': len(freq_df)
-                    }
-                    summary_rows.append(avg_row)
+                avg_row = {
+                    'phase': phase,
+                    'frequency_mhz': freq,
+                    'duration_s': round(phase_df['duration_s'].mean(), 4),
+                    'ttft_s': round(phase_df['ttft_s'].mean(), 4),
+                    'tpot_s': round(phase_df['tpot_s'].mean(), 6),
+                    'avg_power_w': round(phase_df['avg_power_w'].mean(), 2),
+                    'peak_power_w': round(phase_df['peak_power_w'].mean(), 2),
+                    'total_energy_j': round(phase_df['total_energy_j'].mean(), 4),
+                    'throughput_tps': round(phase_df['throughput_tps'].mean(), 2),
+                    'j_per_token': round(phase_df['j_per_token'].mean(), 4),
+                    'total_output_tokens': int(phase_df['total_output_tokens'].mean()),
+                    'tpj': round(phase_df['tpj'].mean(), 4),
+                    'repeat_count': len(phase_df)
+                }
+                summary_rows.append(avg_row)
             
-            summary_df = pd.DataFrame(summary_rows)
+            # 保存汇总结果到 CSV（追加模式）
             summary_csv = args.output.replace('.csv', '_summary.csv')
-            summary_df.to_csv(summary_csv, index=False)
+            summary_df = pd.DataFrame(summary_rows)
+            mode = 'a' if os.path.exists(summary_csv) else 'w'
+            header = not os.path.exists(summary_csv)
+            summary_df.to_csv(summary_csv, index=False, mode=mode, header=header)
             print(f"[*] 汇总结果已保存: {summary_csv}")
             
-            # 打印 Sweet Spot 表格
-            print_sweet_spot_table(summary_rows, "Sweet Spot 扫描结果（平均值）")
-            
-            # 保存文本摘要
-            with open(args.summary, 'w', encoding='utf-8') as f:
-                f.write("Sweet Spot 频率扫描摘要\n")
-                f.write("="*80 + "\n\n")
-                f.write(f"测试频率: {frequencies}\n")
-                f.write(f"每个频率重复: {args.repeat} 次\n")
-                f.write(f"测试阶段: {args.phases}\n\n")
-                
-                for phase in ['Prefill', 'Decode', 'E2E']:
-                    best, _ = find_sweet_spot(summary_rows, phase)
-                    if best:
-                        f.write(f"【{phase} 阶段 Sweet Spot】\n")
-                        f.write(f"  最优频率: {best['frequency_mhz']} MHz\n")
-                        f.write(f"  TPJ (Tokens/Joule): {best['tpj']:.4f}\n")
-                        f.write(f"  J/Token: {best['j_per_token']:.4f}\n")
-                        f.write(f"  平均功耗: {best['avg_power_w']:.2f} W\n")
-                        f.write(f"  TTFT: {best['ttft_s']:.4f} s\n")
-                        f.write(f"  TPOT: {best['tpot_s']:.6f} s\n")
-                        f.write(f"  吞吐: {best['throughput_tps']:.2f} tokens/s\n\n")
-            
-            print(f"\n[*] 摘要已保存: {args.summary}")
+            # 打印当前频率的 Sweet Spot 表格
+            print_sweet_spot_table(summary_rows, f"频率 {freq} MHz 测试结果")
         
         print(f"\n{'='*80}")
         print(" Sweet Spot 扫描完成!")

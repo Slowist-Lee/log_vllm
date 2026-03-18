@@ -284,6 +284,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    print(f"Arguments: {args}")
     save_system_info(args.model, script_name="e2e_profile_ttft")
 
     engine = build_engine(
@@ -329,6 +330,11 @@ def main() -> None:
                 sampler.stop()
 
             df = sampler.to_dataframe()
+            # 计算 energy_j，与 annotate_and_save 保持一致
+            df = df.sort_values("timestamp").reset_index(drop=True)
+            df["time_interval"] = df["timestamp"].diff().fillna(args.sample_interval)
+            df["energy_j"] = df["power_w"] * df["time_interval"]
+            
             out_csv = f"./log/e2e_load_profile_{load_level}.csv"
             annotate_and_save(df=df, out_csv=out_csv, meta=meta, sample_interval=args.sample_interval)
             
