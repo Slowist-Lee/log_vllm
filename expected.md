@@ -104,6 +104,43 @@ python sweet_spot.py --start 600 --end 1500 --step 100 --phases prefill decode e
 
 干扰实验需要重跑，来测试PD分离
 
+---
+
+三个文件已创建完毕：
+
+文件说明
+task5_heatmap_run.sh — 主驱动脚本
+
+外层循环 7 个频率 × 内层循环 9 个 batch_size = 63 次实验
+每个频率块开始时 nvidia-smi -lgc 锁定频率，全部完成后 -rgc 恢复默认
+自动初始化 summary.csv（带表头）
+task5_heatmap_core.py — 单次 (freq, bs) 推理脚本
+
+接受 --freq / --bs / --log-dir 参数
+每次调用独立 build + warmup engine，避免跨频率状态污染
+两份输出：
+./log/task5_heatmap/power_logs/freq{F}_bs{B}_power_log.csv — 每 50ms 一行的功耗+时钟+利用率时序数据
+./log/task5_heatmap/summary.csv — 追加一行汇总指标（含 TPJ）
+task5_heatmap_plot.py — 热力图绘制脚本
+
+读取 summary.csv，生成 2×3 的子图网格，5 个热力图：
+子图	指标	颜色方向
+Throughput	tok/s	绿=高（越高越好）
+E2E Latency	s	绿=低（越低越好）
+TBT/TPOT	ms/tok	绿=低
+Avg Power	W	黄→红（信息性）
+Energy Eff (TPJ)	tok/J	绿=高（越高越好）
+使用方式
+```bash
+# 1. 运行实验（约需较长时间，63 次完整推理）
+bash task5_heatmap_run.sh
+
+# 2. 生成热力图
+python task5_heatmap_plot.py --log-dir ./log/task5
+```
+
+---
+
 ## 二、Benchmark 结论映射
 
 | # | 结论 | 当前状态 | 对应脚本 | 结果文件 | 说明 |
