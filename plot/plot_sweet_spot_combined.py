@@ -213,12 +213,12 @@ def plot_sweet_spot(
         )
 
         note = (
-            f"Sweet Spot\\n"
-            f"{int(best_row['frequency_mhz'])} MHz\\n"
+            f"Sweet Spot\n"
+            f"{int(best_row['frequency_mhz'])} MHz\n"
             f"{metric}={best_row[metric]:.4f}"
         )
         if min_throughput_ratio > 0:
-            note += f"\\nTPS>={threshold_tps:.2f}"
+            note += f"\nTPS>={threshold_tps:.2f}"
 
         ax.annotate(
             note,
@@ -229,13 +229,21 @@ def plot_sweet_spot(
             bbox={"boxstyle": "round,pad=0.25", "fc": "white", "alpha": 0.9},
         )
 
-        ax.set_title(f"{phase} {optimization_label} {metric_labels.get(metric, metric)}", 
-                     fontsize=12, fontweight="bold")
-        ax.set_xlabel("GPU Frequency (MHz)")
+        ax.set_xlabel("GPU Frequency (MHz)", labelpad=6)
         ax.set_ylabel(metric_labels.get(metric, metric))
         ax.grid(axis="both", alpha=0.25)
         ax.set_xticks(phase_df["frequency_mhz"])
         ax.legend(frameon=False)
+        ax.text(
+            0.5,
+            -0.30,
+            f"{phase} {optimization_label} {metric_labels.get(metric, metric)}",
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+        )
 
         summary_rows.append(
             {
@@ -250,7 +258,7 @@ def plot_sweet_spot(
 
     fig.suptitle(f"{optimization_label} {metric_labels.get(metric, metric)} by Phase", 
                  fontsize=15, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.12, 1, 0.95))
 
     figure_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,9 +269,9 @@ def plot_sweet_spot(
     summary_df = pd.DataFrame(summary_rows)
     summary_df.to_csv(summary_path, index=False)
 
-    print(f"\\n{metric_labels.get(metric, metric)} sweet spot summary:")
+    print(f"\n{metric_labels.get(metric, metric)} sweet spot summary:")
     print(summary_df.to_string(index=False))
-    print(f"\\nFigure saved to: {figure_path}")
+    print(f"\nFigure saved to: {figure_path}")
     print(f"Summary saved to: {summary_path}")
 
 
