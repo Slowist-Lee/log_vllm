@@ -19,6 +19,7 @@ def build_engine(model_path: str, max_num_seqs: int = 32, max_num_batched_tokens
         "enable_chunked_prefill": False,
         "max_num_seqs": max_num_seqs,
         "max_num_batched_tokens": max_num_batched_tokens,
+        "enable_prefix_caching": False
     }
     arg_names = inspect.signature(EngineArgs).parameters
     if "disable_log_requests" in arg_names:
@@ -60,6 +61,7 @@ def run_e2e_request(engine: LLMEngine, prompt: str, max_tokens: int = 256) -> di
         ttft_s = total_duration_s
 
     output_tokens = len(final_output.outputs[0].token_ids)
+    input_tokens = len(final_output.prompt_token_ids) if final_output.prompt_token_ids else 0
     tpot_s = max(total_duration_s - ttft_s, 0.0) / max(output_tokens, 1)
 
     return {
@@ -67,6 +69,7 @@ def run_e2e_request(engine: LLMEngine, prompt: str, max_tokens: int = 256) -> di
         "total_duration_s": round(total_duration_s, 4),
         "tpot_s": round(tpot_s, 6),
         "output_tokens": output_tokens,
+        "input_tokens": input_tokens,
     }
 
 
@@ -87,6 +90,7 @@ def run_batch_e2e_requests(engine: LLMEngine, prompts: list, max_tokens: int = 1
     ttft_dict = {rid: None for rid in req_ids}
     finished_dict = {rid: False for rid in req_ids}
     total_output_tokens = 0
+    total_input_tokens = 0
 
     # 2. 步进引擎，直到所有请求完成
     while not all(finished_dict.values()):
@@ -104,6 +108,7 @@ def run_batch_e2e_requests(engine: LLMEngine, prompts: list, max_tokens: int = 1
             if out.finished:
                 finished_dict[rid] = True
                 total_output_tokens += generated_len
+                total_input_tokens += len(out.prompt_token_ids) if out.prompt_token_ids else 0
 
     total_duration_s = time.perf_counter() - t0
 
@@ -119,6 +124,7 @@ def run_batch_e2e_requests(engine: LLMEngine, prompts: list, max_tokens: int = 1
         "total_duration_s": round(total_duration_s, 4),
         "mean_tpot_s": round(mean_tpot_s, 6),
         "total_output_tokens": total_output_tokens,
+        "total_input_tokens": total_input_tokens,
     }
 
 

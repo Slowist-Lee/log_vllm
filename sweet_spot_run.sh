@@ -5,35 +5,47 @@ set -e
 # 确保 log 文件夹存在
 mkdir -p ./log
 
-# 初始化 CSV 文件并写入表头
-HEADER="phase,frequency_mhz,duration_s,ttft_s,tpot_s,avg_power_w,peak_power_w,total_energy_j,throughput_tps,j_per_token,total_output_tokens,tpj,input_tokens,repeat_count"
-# 确保重新创建文件，避免表头不一致
-echo "$HEADER" > ./log/sweet_spot_results.csv
+PREFILL_REQUESTS_PER_MEASURE=10
 
 echo "=========================================================="
-echo " Starting Sweet Spot Frequency Scanning"
+echo " Sweet Spot Frequency Scanning"
+echo " Frequencies: 750-1300 MHz, step 50 MHz, repeat 1"
+echo " Prefill requests/measure: ${PREFILL_REQUESTS_PER_MEASURE}"
 echo "=========================================================="
 
-# 定义测试频率范围
-FREQUENCIES=(700 900 1100 1300 1410 1500)
+echo ""
+echo "========== [2/4] Scanning Decode Sweet Spot =========="
+python sweet_spot.py --start 750 --end 1300 --step 50 --repeat 3 --phases decode \
+    --output ./log/sweet_spot_decode.csv
 
-for FREQ in "${FREQUENCIES[@]}"; do
-    echo "----------------------------------------------------------"
-    echo "[*] Locking GPU frequency to ${FREQ} MHz..."
-    sudo nvidia-smi -lgc ${FREQ},${FREQ}
-    sleep 2 # 给 GPU 几秒钟稳定频率
-    
-    echo "[*] Running Sweet Spot Test for Frequency: ${FREQ} MHz"
-    # 调用 Python 脚本，传入 freq 参数
-    python sweet_spot.py --freq ${FREQ} --repeat 3 --phases prefill decode e2e
-done
+# -------------------------------------------------------
+# Phase 1: Prefill
+# 模型只加载一次，扫描所有频率
+# -------------------------------------------------------
+echo ""
+echo "========== [1/4] Scanning Prefill Sweet Spot =========="
+python sweet_spot.py --start 750 --end 1300 --step 50 --repeat 3 --phases prefill \
+    --prefill-requests "$PREFILL_REQUESTS_PER_MEASURE" \
+    --output ./log/sweet_spot_prefill.csv
 
-# 测试完后，务必恢复 GPU 默认频率限制
-echo "[*] Resetting GPU frequency limits..."
-sudo nvidia-smi -rgc
-sleep 2
 
+# -------------------------------------------------------
+# Phase 4: E2E (Batch Processing)
+# BS=16, Input Length=1024, Max Tokens=256
+# -------------------------------------------------------
+# echo ""
+# echo "========== [4/4] Scanning E2E Sweet Spot (Batch Size=16) =========="
+# python sweet_spot.py --start 750 --end 1300 --step 50 --repeat 3 --phases e2e \
+#     --batch-size 16 --input-length 1024 --decode-tokens 256 \
+#     --output ./log/sweet_spot_e2e_batch16.csv
+
+echo ""
 echo "=========================================================="
-echo " Sweet Spot Scanning completed successfully!"
-echo " Results saved in: ./log/sweet_spot_results.csv"
+echo " Sweet Spot Scanning completed!"
+echo " Results:"
+echo "   Prefill:        ./log/sweet_spot_prefill_summary.csv"
+echo "   Decode:         ./log/sweet_spot_decode_summary.csv"
+echo "   E2E (Single):   ./log/sweet_spot_e2e_summary.csv"
+echo "   E2E (Batch 16): ./log/sweet_spot_e2e_batch16_summary.csv"
 echo "=========================================================="
+

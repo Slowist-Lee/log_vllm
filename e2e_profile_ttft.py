@@ -55,8 +55,11 @@ class GPUSampler:
                 util = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(self.handle)
 
-                # 显存利用率按占用比例记录，更直观。
-                mem_util_pct = (mem_info.used / mem_info.total) * 100.0 if mem_info.total > 0 else 0.0
+                # 核心硬件级指标：计算利用率 vs. 显存带宽利用率
+                # util.gpu: SM (Streaming Multiprocessor) 利用率，代表 CUDA Cores 的繁忙程度
+                # util.memory: 显存带宽利用率，代表显存控制器/总线的繁忙程度
+                # 容量占用率仅作参考，不用于瓶颈分析
+                mem_capacity_pct = (mem_info.used / mem_info.total) * 100.0 if mem_info.total > 0 else 0.0
 
                 row = {
                     "timestamp": now,
@@ -64,8 +67,9 @@ class GPUSampler:
                     "power_w": power_w,
                     "gpu_clock_mhz": float(gpu_clock),
                     "mem_clock_mhz": float(mem_clock),
-                    "util_gpu_pct": float(util.gpu),
-                    "util_mem_pct": mem_util_pct,
+                    "sm_util_pct": float(util.gpu),  # 计算利用率：代表 CUDA Cores 有多忙
+                    "mem_bw_util_pct": float(util.memory),  # 显存带宽利用率：代表显存搬运有多忙
+                    "mem_capacity_pct": mem_capacity_pct,  # 显存容量占用率：仅作参考
                 }
                 with self._lock:
                     self.records.append(row)

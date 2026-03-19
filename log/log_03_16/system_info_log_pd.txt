@@ -1,4 +1,0 @@
-=== Environment Info ===
-GPU: Tesla V100-SXM2-32GB | Driver: 535.274.02
-Model: ./mistral_7b_model/LLM-Research/Mistral-7B-v0.3 | vLLM: 0.17.1
-========================
