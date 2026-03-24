@@ -12,16 +12,23 @@ from gpu_utils import load_long_prompt, save_system_info, extract_ttft_tpot, GPU
 # E2E 推理辅助：使用 LLMEngine.step() 精确捕获 TTFT
 # ---------------------------------------------------------------------------
 
-def build_engine(model_path: str, max_num_seqs: int = 32, max_num_batched_tokens: int = 8192) -> LLMEngine:
+def build_engine(
+    model_path: str,
+    max_num_seqs: int = 256,
+    max_num_batched_tokens: int = 32768,
+    gpu_memory_utilization: float = 0.95,
+) -> LLMEngine:
     engine_kwargs = {
         "model": model_path,
         "enforce_eager": True,
         "enable_chunked_prefill": False,
         "max_num_seqs": max_num_seqs,
         "max_num_batched_tokens": max_num_batched_tokens,
-        "enable_prefix_caching": False
+        "enable_prefix_caching": False,
     }
     arg_names = inspect.signature(EngineArgs).parameters
+    if "gpu_memory_utilization" in arg_names:
+        engine_kwargs["gpu_memory_utilization"] = gpu_memory_utilization
     if "disable_log_requests" in arg_names:
         engine_kwargs["disable_log_requests"] = True
     if "max_model_len" in arg_names:

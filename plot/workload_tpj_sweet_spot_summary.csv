@@ -1,0 +1,5 @@
+workload,input_tokens,output_tokens,sweet_spot_freq_mhz,sweet_spot_tpj,sweet_spot_duration_s,slo_s,slo_met_all_freq,min_freq_slo_met
+SS,64,64,950,0.7795156666666667,1.643,8.0,1,750.0
+SL,64,512,950,0.4416343333333333,13.0653,8.0,0,
+LS,1024,64,950,5.137107666666666,2.1076,8.0,1,750.0
+LL,1024,512,950,1.1027683333333334,14.246366666666669,8.0,0,

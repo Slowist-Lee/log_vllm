@@ -1,4 +1,3 @@
 phase,sweet_spot_frequency_mhz,sweet_spot_tpj,sweet_spot_throughput_tps,min_throughput_ratio,throughput_threshold_tps
-Prefill,900,24.4537,2783.86,0.0,0.0
-Decode,900,0.3971,38.64,0.0,0.0
-E2E,950,1.2614,128.54,0.0,0.0
+Prefill,900,24.2121,3005.01,0.0,0.0
+Decode,900,8.6398,875.33,0.0,0.0

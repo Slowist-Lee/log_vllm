@@ -12,14 +12,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_PREFILL_INPUT = PROJECT_ROOT / "log" / "sweet_spot" / "sweet_spot_prefill_summary.csv"
 DEFAULT_DECODE_INPUT = PROJECT_ROOT / "log" / "sweet_spot" / "sweet_spot_decode_summary.csv"
-DEFAULT_E2E_INPUT = PROJECT_ROOT / "log" / "sweet_spot" / "sweet_spot_e2e_batch16_summary.csv"
 DEFAULT_FIGURE = PROJECT_ROOT / "log" / "sweet_spot_combined_new.png"
 DEFAULT_SUMMARY = PROJECT_ROOT / "log" / "sweet_spot_combined_summary.csv"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot sweet spot by phase from Prefill and E2E summary CSVs",
+        description="Plot sweet spot by phase from Prefill and Decode summary CSVs",
     )
     parser.add_argument(
         "--prefill-input",
@@ -32,12 +31,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_DECODE_INPUT,
         help="Path to decode summary CSV",
-    )
-    parser.add_argument(
-        "--e2e-input",
-        type=Path,
-        default=DEFAULT_E2E_INPUT,
-        help="Path to e2e summary CSV",
     )
     parser.add_argument(
         "--output-figure",
@@ -76,11 +69,10 @@ def require_columns(df: pd.DataFrame, required: list[str]) -> None:
         raise ValueError(f"Missing required columns: {missing}. Current columns: {list(df.columns)}")
 
 
-def load_data(prefill_path: Path, decode_path: Path, e2e_path: Path) -> pd.DataFrame:
+def load_data(prefill_path: Path, decode_path: Path) -> pd.DataFrame:
     inputs = [
         ("Prefill", prefill_path),
         ("Decode", decode_path),
-        ("E2E", e2e_path),
     ]
 
     dfs: list[pd.DataFrame] = []
@@ -92,7 +84,10 @@ def load_data(prefill_path: Path, decode_path: Path, e2e_path: Path) -> pd.DataF
             continue
 
         phase_df = pd.read_csv(csv_path)
-        require_columns(phase_df, ["frequency_mhz", "tpj", "throughput_tps"])
+        require_columns(
+            phase_df,
+            ["frequency_mhz", "tpj", "throughput_tps", "duration_s", "avg_power_w"],
+        )
 
         phase_df = phase_df.copy()
         # Force source phase label so each input contributes exactly one phase.
@@ -113,6 +108,7 @@ def load_data(prefill_path: Path, decode_path: Path, e2e_path: Path) -> pd.DataF
     df["frequency_mhz"] = pd.to_numeric(df["frequency_mhz"], errors="coerce")
     df["tpj"] = pd.to_numeric(df["tpj"], errors="coerce")
     df["throughput_tps"] = pd.to_numeric(df["throughput_tps"], errors="coerce")
+    df["duration_s"] = pd.to_numeric(df.get("duration_s"), errors="coerce")
     df["avg_power_w"] = pd.to_numeric(df.get("avg_power_w"), errors="coerce")
     df["total_energy_j"] = pd.to_numeric(df.get("total_energy_j"), errors="coerce")
     df["j_per_token"] = pd.to_numeric(df.get("j_per_token"), errors="coerce")
@@ -152,12 +148,9 @@ def plot_sweet_spot(
     metric: str,
     min_throughput_ratio: float,
 ) -> None:
-    phases = ["Prefill", "Decode", "E2E"]
-
     colors = {
         "Prefill": "#C44E52",
         "Decode": "#4C72B0",
-        "E2E": "#55A868",
     }
     
     metric_labels = {
@@ -174,53 +167,136 @@ def plot_sweet_spot(
     else:
         optimization_label = "Maximum"
 
-    n = len(phases)
-    fig, axes = plt.subplots(1, n, figsize=(5.3 * n, 5), dpi=180)
-    if n == 1:
-        axes = [axes]
+    fig, axes = plt.subplots(1, 2, figsize=(12.2, 5.2), dpi=180)
+    ax_left = axes[0]
+    ax_right = axes[1]
+    ax_right_twin = ax_right.twinx()
 
     summary_rows: list[dict] = []
+    prefill_df = df[df["phase"] == "Prefill"].sort_values("frequency_mhz").reset_index(drop=True)
+    decode_df = df[df["phase"] == "Decode"].sort_values("frequency_mhz").reset_index(drop=True)
 
-    for ax, phase in zip(axes, phases):
-        phase_df = df[df["phase"] == phase].sort_values("frequency_mhz").reset_index(drop=True)
-        if phase_df.empty:
-            raise ValueError(f"No rows found for phase: {phase}")
-        
-        if metric not in phase_df.columns:
-            print(f"Warning: {metric} not found in {phase} data")
-            continue
-        
+    if prefill_df.empty or decode_df.empty:
+        raise ValueError("Both Prefill and Decode rows are required for combined plotting.")
+
+    if metric not in prefill_df.columns or metric not in decode_df.columns:
+        raise ValueError(f"Metric '{metric}' not found in both Prefill/Decode data.")
+
+    merged = pd.merge(
+        prefill_df[["frequency_mhz", "duration_s", "avg_power_w"]],
+        decode_df[["frequency_mhz", "duration_s", "avg_power_w"]],
+        on="frequency_mhz",
+        how="inner",
+        suffixes=("_prefill", "_decode"),
+    ).sort_values("frequency_mhz")
+
+    if merged.empty:
+        raise ValueError("No frequency intersection between Prefill and Decode rows.")
+
+    # 左图：时延堆叠 + 功耗曲线
+    ax_left.bar(
+        merged["frequency_mhz"],
+        merged["duration_s_prefill"],
+        width=34,
+        color=colors["Prefill"],
+        label="Prefill duration",
+    )
+    ax_left.bar(
+        merged["frequency_mhz"],
+        merged["duration_s_decode"],
+        width=34,
+        bottom=merged["duration_s_prefill"],
+        color=colors["Decode"],
+        label="Decode duration",
+    )
+
+    ax_left_twin = ax_left.twinx()
+    ax_left_twin.plot(
+        merged["frequency_mhz"],
+        merged["avg_power_w_prefill"],
+        marker="o",
+        linewidth=1.9,
+        color="#8C1C13",
+        label="Prefill avg power",
+    )
+    ax_left_twin.plot(
+        merged["frequency_mhz"],
+        merged["avg_power_w_decode"],
+        marker="o",
+        linestyle="--",
+        linewidth=1.9,
+        color="#1D4E89",
+        label="Decode avg power",
+    )
+
+    ax_left.set_title("Time Split + Power Curves")
+    ax_left.set_xlabel("GPU Frequency (MHz)", labelpad=6)
+    ax_left.set_ylabel("Duration (s)")
+    ax_left_twin.set_ylabel("Average Power (W)")
+    ax_left.set_xticks(merged["frequency_mhz"])
+    ax_left.grid(axis="y", alpha=0.25)
+
+    h1, l1 = ax_left.get_legend_handles_labels()
+    h2, l2 = ax_left_twin.get_legend_handles_labels()
+    ax_left.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8, loc="upper right")
+
+    # 右图：效率双轴（Prefill 左轴，Decode 右轴）
+    ax_right.plot(
+        prefill_df["frequency_mhz"],
+        prefill_df[metric],
+        marker="o",
+        linewidth=2.2,
+        color=colors["Prefill"],
+        label=f"Prefill {metric_labels.get(metric, metric)}",
+    )
+    ax_right_twin.plot(
+        decode_df["frequency_mhz"],
+        decode_df[metric],
+        marker="o",
+        linewidth=2.2,
+        color=colors["Decode"],
+        label=f"Decode {metric_labels.get(metric, metric)}",
+    )
+
+    # 右图双轴等跨度，仅上下平移
+    p_min = float(prefill_df[metric].min())
+    p_max = float(prefill_df[metric].max())
+    d_min = float(decode_df[metric].min())
+    d_max = float(decode_df[metric].max())
+    p_span = p_max - p_min
+    d_span = d_max - d_min
+    common_span = max(p_span, d_span, 1e-6)
+    padded_span = common_span * 1.12
+    p_mid = (p_max + p_min) / 2.0
+    d_mid = (d_max + d_min) / 2.0
+    ax_right.set_ylim(p_mid - padded_span / 2.0, p_mid + padded_span / 2.0)
+    ax_right_twin.set_ylim(d_mid - padded_span / 2.0, d_mid + padded_span / 2.0)
+
+    for phase, phase_df, axis in [
+        ("Prefill", prefill_df, ax_right),
+        ("Decode", decode_df, ax_right_twin),
+    ]:
         best_row, threshold_tps = pick_sweet_spot(phase_df, metric, min_throughput_ratio)
 
-        color = colors.get(phase, "#333333")
-        ax.plot(
-            phase_df["frequency_mhz"],
-            phase_df[metric],
-            marker="o",
-            linewidth=2.2,
-            color=color,
-            label=metric_labels.get(metric, metric),
-        )
-
-        ax.scatter(
+        axis.scatter(
             [best_row["frequency_mhz"]],
             [best_row[metric]],
             color="#F28E2B",
             marker="*",
             s=240,
             zorder=6,
-            label="Sweet Spot",
+            label=f"{phase} Sweet Spot",
         )
 
         note = (
-            f"Sweet Spot\n"
+            f"{phase} Sweet Spot\n"
             f"{int(best_row['frequency_mhz'])} MHz\n"
             f"{metric}={best_row[metric]:.4f}"
         )
         if min_throughput_ratio > 0:
             note += f"\nTPS>={threshold_tps:.2f}"
 
-        ax.annotate(
+        axis.annotate(
             note,
             (best_row["frequency_mhz"], best_row[metric]),
             textcoords="offset points",
@@ -229,36 +305,32 @@ def plot_sweet_spot(
             bbox={"boxstyle": "round,pad=0.25", "fc": "white", "alpha": 0.9},
         )
 
-        ax.set_xlabel("GPU Frequency (MHz)", labelpad=6)
-        ax.set_ylabel(metric_labels.get(metric, metric))
-        ax.grid(axis="both", alpha=0.25)
-        ax.set_xticks(phase_df["frequency_mhz"])
-        ax.legend(frameon=False)
-        ax.text(
-            0.5,
-            -0.30,
-            f"{phase} {optimization_label} {metric_labels.get(metric, metric)}",
-            transform=ax.transAxes,
-            ha="center",
-            va="top",
-            fontsize=12,
-            fontweight="bold",
-        )
-
         summary_rows.append(
             {
                 "phase": phase,
                 "sweet_spot_frequency_mhz": int(best_row["frequency_mhz"]),
                 f"sweet_spot_{metric}": float(best_row[metric]),
                 "sweet_spot_throughput_tps": float(best_row["throughput_tps"]),
+                "sweet_spot_avg_power_w": float(best_row["avg_power_w"]),
                 "min_throughput_ratio": float(min_throughput_ratio),
                 "throughput_threshold_tps": float(threshold_tps),
             }
         )
 
+    ax_right.set_title("Phase Efficiency (Dual Axis, Matched Scale Span)")
+    ax_right.set_xlabel("GPU Frequency (MHz)", labelpad=6)
+    ax_right.set_ylabel(f"Prefill {metric_labels.get(metric, metric)}", color=colors["Prefill"])
+    ax_right_twin.set_ylabel(f"Decode {metric_labels.get(metric, metric)}", color=colors["Decode"])
+    ax_right.set_xticks(sorted(set(prefill_df["frequency_mhz"]).intersection(set(decode_df["frequency_mhz"]))))
+    ax_right.grid(axis="both", alpha=0.25)
+
+    r1, rl1 = ax_right.get_legend_handles_labels()
+    r2, rl2 = ax_right_twin.get_legend_handles_labels()
+    ax_right.legend(r1 + r2, rl1 + rl2, frameon=False, fontsize=8, loc="best")
+
     fig.suptitle(f"{optimization_label} {metric_labels.get(metric, metric)} by Phase", 
                  fontsize=15, fontweight="bold")
-    fig.tight_layout(rect=(0, 0.12, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.05, 1, 0.95))
 
     figure_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,7 +352,7 @@ def main() -> None:
     if not 0.0 <= args.min_throughput_ratio <= 1.0:
         raise ValueError("--min-throughput-ratio must be within [0, 1].")
 
-    df = load_data(args.prefill_input, args.decode_input, args.e2e_input)
+    df = load_data(args.prefill_input, args.decode_input)
     plot_sweet_spot(
         df=df,
         figure_path=args.output_figure,
